@@ -1,0 +1,51 @@
+
+
+
+
+
+1. make sort plate labels
+
+
+	if sql .db exits, ask for list of new plates to be added
+
+
+	do you need any custom labels?
+
+		if yes: provide list of custum plate names
+
+	read csv with info for standard sample plates
+
+
+	create random 5 char plate base name, then store full plate name in a dict with random 5 charactter echo/hamilton plate barcodes
+
+	custom plates are own row in df
+
+	make bartender file for hamilton and echo labels for each plate
+
+	create sql .db.
+
+
+2. Script to generate FA input files and take in layout files
+
+Check if db already exists, if so, then use logic to add to db, otherwise create db later
+
+Find list of standard plates
+
+Are there any multisample or non-standard layouts (default no)?
+	if yes: automatically find layout files
+
+Identify missing samples not found in any standard or custom plates
+
+Generate FA input files
+
+Generate or update db
+
+archive standard plate list and custom layout files
+
+	
+		
+3. process FA output and separate endpoint DNA quant files for QC			
+
+
+
+
