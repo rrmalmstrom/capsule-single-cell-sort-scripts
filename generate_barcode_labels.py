@@ -61,6 +61,7 @@ from sqlalchemy import create_engine, text
 
 # Constants following implementation guide
 CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+LETTERS_ONLY = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 BARTENDER_HEADER = '%BTW% /AF="\\\\BARTENDER\\shared\\templates\\ECHO_BCode8.btw" /D="%Trigger File Name%" /PRN="bcode8" /R=3 /P /DD\r\n\r\n%END%\r\n\r\n\r\n'
 
 # Database and file names
@@ -105,7 +106,7 @@ def read_sample_csv(csv_path):
             print("All values must be integers for laboratory automation safety.")
             sys.exit()
         
-        print(f"✅ Successfully read {len(df)} samples from CSV file")
+        print(f"✅ Read {len(df)} samples from CSV file")
         return df
         
     except FileNotFoundError:
@@ -146,7 +147,7 @@ def make_plate_names(sample_df):
             })
     
     result_df = pd.DataFrame(plates)
-    print(f"✅ Generated {len(result_df)} standard plate names")
+    print(f"✅ Generated {len(result_df)} standard plates")
     return result_df
 
 
@@ -165,12 +166,17 @@ def generate_simple_barcodes(plates_df, existing_individual_plates_df=None):
         SystemExit: If barcode generation fails
     """
     try:
-        # Generate one 5-character base barcode for the entire project
-        base_barcode = ''.join(random.choices(CHARSET, k=5))
-        
-        # Determine starting number for incremental barcodes
+        # Determine base barcode and starting number
         start_number = 1
+        base_barcode = None
+        
         if existing_individual_plates_df is not None and len(existing_individual_plates_df) > 0:
+            # Extract existing base barcode from first existing barcode
+            first_barcode = existing_individual_plates_df['barcode'].iloc[0]
+            if '.' in str(first_barcode):
+                base_barcode = str(first_barcode).split('.')[0]
+                # Reuse existing base barcode
+            
             # Find the highest existing barcode number to continue from
             existing_numbers = []
             for barcode in existing_individual_plates_df['barcode']:
@@ -183,7 +189,15 @@ def generate_simple_barcodes(plates_df, existing_individual_plates_df=None):
             
             if existing_numbers:
                 start_number = max(existing_numbers) + 1
-                print(f"Continuing barcode numbering from {start_number}")
+                # Continue numbering from existing plates
+        
+        # Generate new base barcode only if no existing plates
+        if base_barcode is None:
+            # First character must be a letter, remaining 4 can be letters or numbers
+            first_char = random.choice(LETTERS_ONLY)
+            remaining_chars = ''.join(random.choices(CHARSET, k=4))
+            base_barcode = first_char + remaining_chars
+            print(f"Generated base barcode: '{base_barcode}'")
         
         # Assign incremental barcodes to all plates
         for i, idx in enumerate(plates_df.index):
@@ -193,8 +207,7 @@ def generate_simple_barcodes(plates_df, existing_individual_plates_df=None):
             plates_df.at[idx, 'barcode'] = full_barcode
             plates_df.at[idx, 'created_timestamp'] = datetime.now().isoformat()
         
-        print(f"✅ Generated {len(plates_df)} incremental barcodes using base '{base_barcode}'")
-        print(f"   Barcode range: {base_barcode}.{start_number} to {base_barcode}.{start_number + len(plates_df) - 1}")
+        print(f"✅ Generated {len(plates_df)} barcodes: {base_barcode}.{start_number} to {base_barcode}.{start_number + len(plates_df) - 1}")
         
         return plates_df
         
@@ -260,7 +273,7 @@ def save_to_two_table_database(sample_metadata_df, individual_plates_df, db_path
         # Properly dispose of engine
         engine.dispose()
         
-        print(f"✅ Saved {len(sample_metadata_df)} samples and {len(individual_plates_df)} plates to database: {db_path}")
+        print(f"✅ Saved to database: {len(sample_metadata_df)} samples, {len(individual_plates_df)} plates")
         
     except Exception as e:
         print(f"FATAL ERROR: Could not save to database {db_path}: {e}")
@@ -385,9 +398,7 @@ def make_bartender_file(df, output_path):
             f.write('\r\n')
         
         print(f"✅ Created BarTender file: {output_path}")
-        print(f"   Format: Reverse order, interleaved echo/hamilton pairs with separators")
-        print(f"   Echo labels: {len(df)} (with plate names)")
-        print(f"   Hamilton labels: {len(df)} (with quoted barcode)")
+        print(f"   {len(df)} plates included")
         
     except Exception as e:
         print(f"FATAL ERROR: Could not create BarTender file {output_path}: {e}")
@@ -765,7 +776,7 @@ def archive_database_file(db_path):
     archive_path = archive_dir / archive_name
     
     shutil.move(str(db_path), str(archive_path))
-    print(f"📁 Archived database: {db_path} → {archive_path}")
+    # Database archived
 
 
 def manage_bartender_file(bartender_file_path):
@@ -786,7 +797,7 @@ def manage_bartender_file(bartender_file_path):
     # Move file to bartender folder
     destination = bartender_dir / bartender_file_path.name
     shutil.move(str(bartender_file_path), str(destination))
-    print(f"📁 Moved BarTender file: {bartender_file_path} → {destination}")
+    # BarTender file organized
 
 
 def manage_input_files():
@@ -812,7 +823,6 @@ def manage_input_files():
         if custom_file.exists():
             destination = custom_dir / custom_file.name
             shutil.move(str(custom_file), str(destination))
-            print(f"📁 Moved custom plate file: {custom_file} → {destination}")
             moved_files.append(str(destination))
     
     # Move additional standard plate files
@@ -821,11 +831,9 @@ def manage_input_files():
         if standard_file.exists():
             destination = standard_dir / standard_file.name
             shutil.move(str(standard_file), str(destination))
-            print(f"📁 Moved standard plate file: {standard_file} → {destination}")
             moved_files.append(str(destination))
     
-    if moved_files:
-        print(f"✅ Organized {len(moved_files)} input files into folder structure")
+    # Files organized
     
     return moved_files
 
@@ -853,7 +861,7 @@ def archive_csv_file(csv_file_path):
     archive_path = archive_dir / archive_name
     
     shutil.move(str(csv_file_path), str(archive_path))
-    print(f"📁 Archived CSV file: {csv_file_path} → {archive_path}")
+    # Archived CSV file
 
 
 def create_updated_csv_files(sample_metadata_df, individual_plates_df):
@@ -866,11 +874,8 @@ def create_updated_csv_files(sample_metadata_df, individual_plates_df):
     """
     # Create new sample_metadata.csv
     sample_metadata_df.to_csv('sample_metadata.csv', index=False)
-    print(f"✅ Created updated sample_metadata.csv with {len(sample_metadata_df)} samples")
-    
-    # Create new plate_names.csv
     individual_plates_df.to_csv('plate_names.csv', index=False)
-    print(f"✅ Created updated plate_names.csv with {len(individual_plates_df)} plates")
+    # CSV files updated
 
 
 def manage_csv_files(sample_metadata_df, individual_plates_df):
@@ -881,8 +886,6 @@ def manage_csv_files(sample_metadata_df, individual_plates_df):
         sample_metadata_df (pd.DataFrame): Sample metadata DataFrame
         individual_plates_df (pd.DataFrame): Individual plates DataFrame
     """
-    print(f"\n📁 MANAGING CSV FILES")
-    
     # Archive existing CSV files if they exist
     if Path('sample_metadata.csv').exists():
         archive_csv_file('sample_metadata.csv')
@@ -955,13 +958,14 @@ def process_first_run():
     return sample_df, plates_df
 
 
-def process_additional_standard_plates(existing_sample_df, additional_plates):
+def process_additional_standard_plates(existing_sample_df, additional_plates, existing_plates_df):
     """
     Process additional standard plates for existing samples.
     
     Args:
         existing_sample_df (pd.DataFrame): Existing sample metadata
         additional_plates (dict): Mapping of sample_id to additional plate count
+        existing_plates_df (pd.DataFrame): Existing plates data to determine next plate numbers
         
     Returns:
         pd.DataFrame: DataFrame of additional plates
@@ -989,13 +993,29 @@ def process_additional_standard_plates(existing_sample_df, additional_plates):
             print(f"⚠️  WARNING: Project-Sample combination '{project}' + '{sample}' not found in existing metadata")
             continue
         
-        # Create additional plates for this sample
+        # DEBUG: Find existing plates for this project-sample combination
+        existing_sample_plates = existing_plates_df[
+            (existing_plates_df['project'] == project) &
+            (existing_plates_df['sample'] == sample) &
+            (existing_plates_df['is_custom'] == False)
+        ]
+        
+        # Find the highest existing plate number for this sample
+        if not existing_sample_plates.empty:
+            max_plate_number = existing_sample_plates['plate_number'].max()
+        else:
+            max_plate_number = 0
+        
+        # Create additional plates for this sample, continuing from the highest existing number
         for i in range(count):
+            next_plate_number = max_plate_number + i + 1
+            plate_name = f"{project}_{sample}.{next_plate_number}"
+            
             additional_plates_list.append({
-                'plate_name': f"{sample_id}_additional_{i+1}",
+                'plate_name': plate_name,
                 'project': project,
                 'sample': sample,
-                'plate_number': i + 1,
+                'plate_number': next_plate_number,
                 'is_custom': False
             })
     
@@ -1031,7 +1051,7 @@ def process_subsequent_run(existing_sample_df, existing_plates_df):
     sample_df = existing_sample_df  # Use existing sample metadata
     
     if additional_plates:
-        additional_df = process_additional_standard_plates(existing_sample_df, additional_plates)
+        additional_df = process_additional_standard_plates(existing_sample_df, additional_plates, existing_plates_df)
         plates_df = additional_df
     
     # Process custom plates
@@ -1064,8 +1084,7 @@ def process_barcodes(plates_df, existing_plates_df):
     Returns:
         tuple: (plates_df, final_plates_df) - Updated plates and combined final data
     """
-    print(f"\n🏷️  GENERATING SIMPLIFIED BARCODES")
-    print(f"Generating incremental barcodes for {len(plates_df)} plates...")
+    # Generate barcodes
     
     # Generate simplified barcodes for new plates
     plates_df = generate_simple_barcodes(plates_df, existing_plates_df)
@@ -1091,33 +1110,35 @@ def process_barcodes(plates_df, existing_plates_df):
     return plates_df, final_plates_df
 
 
-def finalize_files_and_database(sample_df, final_plates_df):
+def finalize_files_and_database(sample_df, final_plates_df, new_plates_df):
     """
     Handle all file operations: archiving, saving, organizing.
     
     Args:
         sample_df (pd.DataFrame): Sample metadata
         final_plates_df (pd.DataFrame): Final plates data
+        new_plates_df (pd.DataFrame): New plates added this run
     """
     # Archive existing database file
-    print(f"\n📁 ARCHIVING EXISTING DATABASE")
     archive_database_file(DATABASE_NAME)
     
     # Save to two-table database
-    print(f"\n💾 SAVING TO TWO-TABLE DATABASE")
     save_to_two_table_database(sample_df, final_plates_df, DATABASE_NAME)
     
-    # Generate BarTender file
-    print(f"\n🏷️  GENERATING BARTENDER FILE")
-    make_bartender_file(final_plates_df, BARTENDER_FILE)
+    # Generate BarTender file with timestamp
+    timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
+    bartender_filename = f"BARTENDER_sort_plate_labels_{timestamp}.txt"
+    
+    # Use only new plates for BarTender file generation
+    if not new_plates_df.empty:
+        plates_for_bartender = new_plates_df
+    else:
+        plates_for_bartender = final_plates_df
+    
+    make_bartender_file(plates_for_bartender, bartender_filename)
     
     # File Management - Organize output and input files
-    print(f"\n📁 ORGANIZING FILES")
-    
-    # Move BarTender file to organized folder
-    manage_bartender_file(BARTENDER_FILE)
-    
-    # Move processed input files to organized folders
+    manage_bartender_file(bartender_filename)
     manage_input_files()
     
     # CSV Management - Archive and create updated CSV files
@@ -1165,7 +1186,7 @@ def main():
     plates_df, final_plates_df = process_barcodes(plates_df, existing_plates_df)
     
     # Handle all file operations
-    finalize_files_and_database(sample_df, final_plates_df)
+    finalize_files_and_database(sample_df, final_plates_df, plates_df)
     
     # Print completion summary
     print_completion_summary(sample_df, final_plates_df, plates_df)

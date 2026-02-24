@@ -1,0 +1,14 @@
+%BTW% /AF="\\BARTENDER\shared\templates\ECHO_BCode8.btw" /D="%Trigger File Name%" /PRN="bcode8" /R=3 /P /DD
+
+%END%
+
+
+eQMLV1.18,"BP9735_WCBP1PR.6"
+hQMLV1.18,"hQMLV1.18"
+,
+eQMLV1.17,"BP9735_SitukAM.5"
+hQMLV1.17,"hQMLV1.17"
+,
+eQMLV1.16,"BP9735_SitukAM.4"
+hQMLV1.16,"hQMLV1.16"
+
