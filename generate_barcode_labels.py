@@ -972,21 +972,29 @@ def process_additional_standard_plates(existing_sample_df, additional_plates):
     for sample_id, count in additional_plates.items():
         print(f"  - {sample_id}: {count} additional plates")
         
-        # Find the sample in existing metadata
-        sample_row = existing_sample_df[existing_sample_df['Sample'] == sample_id]
-        if sample_row.empty:
-            print(f"⚠️  WARNING: Sample {sample_id} not found in existing metadata")
+        # Parse PROJECT_SAMPLE format (e.g., "BP9735_WCBP1PR" -> project="BP9735", sample="WCBP1PR")
+        if '_' not in sample_id:
+            print(f"⚠️  WARNING: Invalid format for {sample_id}. Expected PROJECT_SAMPLE format (e.g., 'BP9735_WCBP1PR')")
             continue
+            
+        project, sample = sample_id.split('_', 1)
         
-        # Get the project for this sample
-        project = sample_row.iloc[0]['Project']
+        # Find the sample with matching project and sample combination
+        sample_row = existing_sample_df[
+            (existing_sample_df['Project'] == project) &
+            (existing_sample_df['Sample'] == sample)
+        ]
+        
+        if sample_row.empty:
+            print(f"⚠️  WARNING: Project-Sample combination '{project}' + '{sample}' not found in existing metadata")
+            continue
         
         # Create additional plates for this sample
         for i in range(count):
             additional_plates_list.append({
                 'plate_name': f"{sample_id}_additional_{i+1}",
                 'project': project,
-                'sample': sample_id,
+                'sample': sample,
                 'plate_number': i + 1,
                 'is_custom': False
             })
