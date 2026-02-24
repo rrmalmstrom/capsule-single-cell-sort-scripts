@@ -718,28 +718,28 @@ def get_custom_plates():
             print("Please enter 'y' for yes or 'n' for no.")
 
 
-def create_success_marker():
-    """
-    Create success marker file for workflow manager integration.
+# def create_success_marker():
+#     """
+#     Create success marker file for workflow manager integration.
     
-    Raises:
-        SystemExit: If marker creation fails
-    """
-    try:
-        script_name = Path(__file__).stem
-        status_dir = Path(".workflow_status")
-        status_dir.mkdir(exist_ok=True)
-        success_file = status_dir / f"{script_name}.success"
+#     Raises:
+#         SystemExit: If marker creation fails
+#     """
+#     try:
+#         script_name = Path(__file__).stem
+#         status_dir = Path(".workflow_status")
+#         status_dir.mkdir(exist_ok=True)
+#         success_file = status_dir / f"{script_name}.success"
         
-        with open(success_file, "w") as f:
-            f.write(f"SUCCESS: {script_name} completed at {datetime.now()}\n")
+#         with open(success_file, "w") as f:
+#             f.write(f"SUCCESS: {script_name} completed at {datetime.now()}\n")
         
-        print(f"✅ Success marker created: {success_file}")
+#         print(f"✅ Success marker created: {success_file}")
         
-    except Exception as e:
-        print(f"FATAL ERROR: Could not create success marker: {e}")
-        print("Laboratory automation requires workflow integration for safety.")
-        sys.exit()
+#     except Exception as e:
+#         print(f"FATAL ERROR: Could not create success marker: {e}")
+#         print("Laboratory automation requires workflow integration for safety.")
+#         sys.exit()
 
 
 def archive_database_file(db_path):
@@ -918,112 +918,148 @@ def archive_existing_files(file_list):
         print(f"✅ Archived {archived_count} existing files")
 
 
-def main():
-    """
-    Main script execution following laboratory safety standards.
-    Uses two-table database architecture and simplified barcode system.
-    """
+def print_header():
+    """Print the script header."""
     print("=" * 60)
     print("Laboratory Barcode Label Generation")
     print("Following SPS Laboratory Safety Standards")
     print("=" * 60)
+
+
+def process_first_run():
+    """
+    Handle first run: CSV detection, plate generation, custom plates.
     
-    # Check if database exists (first run vs subsequent run)
-    existing_sample_df, existing_plates_df = read_from_two_table_database(DATABASE_NAME)
+    Returns:
+        tuple: (sample_df, plates_df) - Sample metadata and plates DataFrames
+    """
+    print("\n🔬 FIRST RUN DETECTED")
+    print("Processing sample metadata CSV file...")
     
-    if existing_sample_df is None:
-        # First run - process CSV file
-        print("\n🔬 FIRST RUN DETECTED")
-        print("Processing sample metadata CSV file...")
+    # Automatic CSV detection
+    csv_file = detect_sample_metadata_csv()
+    sample_df = read_sample_csv(csv_file)
+    plates_df = make_plate_names(sample_df)
+    
+    # Add custom plates if requested
+    custom_plates = get_custom_plates()
+    if custom_plates:
+        custom_df = pd.DataFrame([
+            {'plate_name': name, 'project': 'CUSTOM', 'sample': 'CUSTOM',
+             'plate_number': 1, 'is_custom': True}
+            for name in custom_plates
+        ])
+        plates_df = pd.concat([plates_df, custom_df], ignore_index=True)
+        print(f"✅ Added {len(custom_plates)} custom plates")
+    
+    return sample_df, plates_df
+
+
+def process_additional_standard_plates(existing_sample_df, additional_plates):
+    """
+    Process additional standard plates for existing samples.
+    
+    Args:
+        existing_sample_df (pd.DataFrame): Existing sample metadata
+        additional_plates (dict): Mapping of sample_id to additional plate count
         
-        # Automatic CSV detection
-        csv_file = detect_sample_metadata_csv()
-        sample_df = read_sample_csv(csv_file)
-        plates_df = make_plate_names(sample_df)
+    Returns:
+        pd.DataFrame: DataFrame of additional plates
+    """
+    print(f"✅ Found {len(additional_plates)} samples needing additional plates")
+    additional_plates_list = []
+    
+    for sample_id, count in additional_plates.items():
+        print(f"  - {sample_id}: {count} additional plates")
         
-        # Add custom plates if requested
-        custom_plates = get_custom_plates()
-        if custom_plates:
-            custom_df = pd.DataFrame([
-                {'plate_name': name, 'project': 'CUSTOM', 'sample': 'CUSTOM',
-                 'plate_number': 1, 'is_custom': True}
-                for name in custom_plates
-            ])
-            plates_df = pd.concat([plates_df, custom_df], ignore_index=True)
-            print(f"✅ Added {len(custom_plates)} custom plates")
+        # Find the sample in existing metadata
+        sample_row = existing_sample_df[existing_sample_df['Sample'] == sample_id]
+        if sample_row.empty:
+            print(f"⚠️  WARNING: Sample {sample_id} not found in existing metadata")
+            continue
         
-    else:
-        # Subsequent run - add additional plates
-        print(f"\n🔄 SUBSEQUENT RUN DETECTED")
-        print(f"Found existing database with {len(existing_sample_df)} samples and {len(existing_plates_df)} plates")
+        # Get the project for this sample
+        project = sample_row.iloc[0]['Project']
         
-        # Ask for additional standard plates (only on subsequent runs)
-        additional_plates = get_additional_standard_plates()
+        # Create additional plates for this sample
+        for i in range(count):
+            additional_plates_list.append({
+                'plate_name': f"{sample_id}_additional_{i+1}",
+                'project': project,
+                'sample': sample_id,
+                'plate_number': i + 1,
+                'is_custom': False
+            })
+    
+    return pd.DataFrame(additional_plates_list) if additional_plates_list else pd.DataFrame()
+
+
+def process_subsequent_run(existing_sample_df, existing_plates_df):
+    """
+    Handle subsequent run: additional plates, custom plates.
+    
+    Args:
+        existing_sample_df (pd.DataFrame): Existing sample metadata
+        existing_plates_df (pd.DataFrame): Existing plates data
         
-        # Ask for custom plates (available on all runs)
-        custom_plates = get_custom_plates()
-        
-        # Check if user wants to add any plates
-        if not additional_plates and not custom_plates:
-            print("No new plates to add. Exiting.")
-            return
-        
-        # Process additional standard plates
-        plates_df = pd.DataFrame()
-        sample_df = existing_sample_df  # Use existing sample metadata
-        
-        if additional_plates:
-            print(f"✅ Found {len(additional_plates)} samples needing additional plates")
-            additional_plates_list = []
-            
-            for sample_id, count in additional_plates.items():
-                print(f"  - {sample_id}: {count} additional plates")
-                
-                # Find the sample in existing metadata
-                sample_row = existing_sample_df[existing_sample_df['sample'] == sample_id]
-                if sample_row.empty:
-                    print(f"⚠️  WARNING: Sample {sample_id} not found in existing metadata")
-                    continue
-                
-                # Get the project for this sample
-                project = sample_row.iloc[0]['project']
-                
-                # Create additional plates for this sample
-                for i in range(count):
-                    additional_plates_list.append({
-                        'plate_name': f"{sample_id}_additional_{i+1}",
-                        'project': project,
-                        'sample': sample_id,
-                        'plate_number': i + 1,
-                        'is_custom': False
-                    })
-            
-            if additional_plates_list:
-                additional_df = pd.DataFrame(additional_plates_list)
-                plates_df = additional_df
-        
-        # Process custom plates
-        if custom_plates:
-            custom_df = pd.DataFrame([
-                {'plate_name': name, 'project': 'CUSTOM', 'sample': 'CUSTOM',
-                 'plate_number': 1, 'is_custom': True}
-                for name in custom_plates
-            ])
-            if plates_df.empty:
-                plates_df = custom_df
-            else:
-                plates_df = pd.concat([plates_df, custom_df], ignore_index=True)
-            print(f"✅ Added {len(custom_plates)} custom plates")
-        
+    Returns:
+        tuple: (sample_df, plates_df) - Sample metadata and new plates DataFrames
+    """
+    print(f"\n🔄 SUBSEQUENT RUN DETECTED")
+    print(f"Found existing database with {len(existing_sample_df)} samples and {len(existing_plates_df)} plates")
+    
+    # Ask for additional standard plates (only on subsequent runs)
+    additional_plates = get_additional_standard_plates()
+    
+    # Ask for custom plates (available on all runs)
+    custom_plates = get_custom_plates()
+    
+    # Check if user wants to add any plates
+    if not additional_plates and not custom_plates:
+        return existing_sample_df, pd.DataFrame()
+    
+    # Process additional standard plates
+    plates_df = pd.DataFrame()
+    sample_df = existing_sample_df  # Use existing sample metadata
+    
+    if additional_plates:
+        additional_df = process_additional_standard_plates(existing_sample_df, additional_plates)
+        plates_df = additional_df
+    
+    # Process custom plates
+    if custom_plates:
+        custom_df = pd.DataFrame([
+            {'plate_name': name, 'project': 'CUSTOM', 'sample': 'CUSTOM',
+             'plate_number': 1, 'is_custom': True}
+            for name in custom_plates
+        ])
         if plates_df.empty:
-            print("No plates to process. Exiting.")
-            return
-        
+            plates_df = custom_df
+        else:
+            plates_df = pd.concat([plates_df, custom_df], ignore_index=True)
+        print(f"✅ Added {len(custom_plates)} custom plates")
+    
+    if not plates_df.empty:
         print(f"✅ Prepared {len(plates_df)} new plates for processing")
     
-    # Generate simplified barcodes for new plates
+    return sample_df, plates_df
+
+
+def process_barcodes(plates_df, existing_plates_df):
+    """
+    Generate and validate barcodes for new plates.
+    
+    Args:
+        plates_df (pd.DataFrame): New plates needing barcodes
+        existing_plates_df (pd.DataFrame): Existing plates data
+        
+    Returns:
+        tuple: (plates_df, final_plates_df) - Updated plates and combined final data
+    """
     print(f"\n🏷️  GENERATING SIMPLIFIED BARCODES")
     print(f"Generating incremental barcodes for {len(plates_df)} plates...")
+    
+    # Generate simplified barcodes for new plates
     plates_df = generate_simple_barcodes(plates_df, existing_plates_df)
     
     # Validate barcode uniqueness
@@ -1044,6 +1080,17 @@ def main():
         print("Laboratory automation requires unique identifiers for safety.")
         sys.exit()
     
+    return plates_df, final_plates_df
+
+
+def finalize_files_and_database(sample_df, final_plates_df):
+    """
+    Handle all file operations: archiving, saving, organizing.
+    
+    Args:
+        sample_df (pd.DataFrame): Sample metadata
+        final_plates_df (pd.DataFrame): Final plates data
+    """
     # Archive existing database file
     print(f"\n📁 ARCHIVING EXISTING DATABASE")
     archive_database_file(DATABASE_NAME)
@@ -1056,7 +1103,7 @@ def main():
     print(f"\n🏷️  GENERATING BARTENDER FILE")
     make_bartender_file(final_plates_df, BARTENDER_FILE)
     
-    # Phase 6: File Management - Organize output and input files
+    # File Management - Organize output and input files
     print(f"\n📁 ORGANIZING FILES")
     
     # Move BarTender file to organized folder
@@ -1065,28 +1112,59 @@ def main():
     # Move processed input files to organized folders
     manage_input_files()
     
-    # Phase 7: CSV Management - Archive and create updated CSV files
+    # CSV Management - Archive and create updated CSV files
     manage_csv_files(sample_df, final_plates_df)
+
+
+def print_completion_summary(sample_df, final_plates_df, new_plates_df):
+    """
+    Print final success summary.
     
-    # Summary
+    Args:
+        sample_df (pd.DataFrame): Sample metadata
+        final_plates_df (pd.DataFrame): Final plates data
+        new_plates_df (pd.DataFrame): New plates added this run
+    """
     print(f"\n" + "=" * 60)
     print("🎉 SUCCESS! Laboratory barcode generation completed")
     print("=" * 60)
     print(f"Total samples in database: {len(sample_df)}")
     print(f"Total plates in database: {len(final_plates_df)}")
-    print(f"New plates added: {len(plates_df)}")
-    print(f"Database file: {DATABASE_NAME}")
-    print(f"BarTender file: moved to bartender_barcode_labels/")
-    print(f"Input files: organized in previously_processed_plate_files/")
-    print(f"Unique barcodes validated: ✅")
+    print(f"New plates added: {len(new_plates_df)}")
     print("=" * 60)
-    
-    # Create success marker for workflow manager
-    create_success_marker()
-    
-    print("\n✅ Laboratory barcode generation workflow completed successfully!")
-    print("Ready for laboratory automation systems.")
 
+
+def main():
+    """
+    Main script execution following laboratory safety standards.
+    Uses two-table database architecture and simplified barcode system.
+    """
+    print_header()
+    
+    # Determine run type and get existing data
+    existing_sample_df, existing_plates_df = read_from_two_table_database(DATABASE_NAME)
+    
+    # Process plates based on run type
+    if existing_sample_df is None:
+        sample_df, plates_df = process_first_run()
+    else:
+        sample_df, plates_df = process_subsequent_run(existing_sample_df, existing_plates_df)
+        if plates_df.empty:
+            print("No new plates to add. Exiting.")
+            return
+    
+    # Generate and validate barcodes
+    plates_df, final_plates_df = process_barcodes(plates_df, existing_plates_df)
+    
+    # Handle all file operations
+    finalize_files_and_database(sample_df, final_plates_df)
+    
+    # Print completion summary
+    print_completion_summary(sample_df, final_plates_df, plates_df)
+    
+    # # Create success marker for workflow manager
+    # create_success_marker()
+    
 
 if __name__ == "__main__":
     main()
