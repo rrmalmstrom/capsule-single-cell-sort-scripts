@@ -925,8 +925,8 @@ def print_header():
     """Print the script header."""
     print("=" * 60)
     print("Laboratory Barcode Label Generation")
-    print("Following SPS Laboratory Safety Standards")
-    print("=" * 60)
+    # print("Following SPS Laboratory Safety Standards")
+    # print("=" * 60)
 
 
 def process_first_run():
@@ -1157,10 +1157,10 @@ def print_completion_summary(sample_df, final_plates_df, new_plates_df):
     print(f"\n" + "=" * 60)
     print("🎉 SUCCESS! Laboratory barcode generation completed")
     print("=" * 60)
-    print(f"Total samples in database: {len(sample_df)}")
-    print(f"Total plates in database: {len(final_plates_df)}")
-    print(f"New plates added: {len(new_plates_df)}")
-    print("=" * 60)
+    # print(f"Total samples in database: {len(sample_df)}")
+    # print(f"Total plates in database: {len(final_plates_df)}")
+    # print(f"New plates added: {len(new_plates_df)}")
+    # print("=" * 60)
 
 
 def main():
