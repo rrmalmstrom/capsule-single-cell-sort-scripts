@@ -1,0 +1,4 @@
+plate_name,project,sample,plate_number,barcode,is_custom
+BP9735_TestSample1.1,BP9735,TestSample1,1,TEST.1,False
+BP9735_TestSample1.2,BP9735,TestSample1,2,TEST.2,False
+BP9735_TestSample2.1,BP9735,TestSample2,1,TEST.3,False

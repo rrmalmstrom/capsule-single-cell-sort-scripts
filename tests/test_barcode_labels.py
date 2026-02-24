@@ -32,6 +32,9 @@ try:
         make_bartender_file,
         get_csv_file,
         get_custom_plates,
+        detect_csv_file,
+        read_custom_plates_file,
+        read_additional_standard_plates_file,
         validate_barcode_uniqueness,
         create_success_marker,
         archive_existing_files
@@ -361,31 +364,81 @@ class TestBarTenderFileGeneration:
 class TestUserInteraction:
     """Test user interaction functions."""
     
-    @patch('builtins.input', side_effect=['test_input_data_files/sample_metadtata.csv'])
-    def test_get_csv_file_valid_path(self, mock_input):
-        """Test getting valid CSV file path from user."""
-        result = get_csv_file()
-        assert result == 'test_input_data_files/sample_metadtata.csv'
+    def test_detect_csv_file_valid(self):
+        """Test automatic detection of valid CSV file."""
+        result = detect_csv_file()
+        # Should find the sample_metadtata.csv file in current directory
+        assert result.name == 'sample_metadtata.csv'
+        assert result.exists()
     
-    @patch('builtins.input', side_effect=['nonexistent.csv', 'test_input_data_files/sample_metadtata.csv'])
-    @patch('builtins.print')
-    def test_get_csv_file_retry_on_invalid(self, mock_print, mock_input):
-        """Test retrying when invalid file path is provided."""
-        result = get_csv_file()
-        assert result == 'test_input_data_files/sample_metadtata.csv'
-        mock_print.assert_called_with("File not found. Try again.")
-    
-    @patch('builtins.input', side_effect=['n'])
-    def test_get_custom_plates_no_custom(self, mock_input):
-        """Test declining to add custom plates."""
-        result = get_custom_plates()
+    def test_read_custom_plates_file_no_file(self):
+        """Test reading custom plates when no file exists."""
+        result = read_custom_plates_file()
         assert result == []
     
-    @patch('builtins.input', side_effect=['y', 'Custom_Plate_1', 'Custom_Plate_2', ''])
-    def test_get_custom_plates_with_custom(self, mock_input):
-        """Test adding custom plates."""
+    def test_read_custom_plates_file_with_file(self):
+        """Test reading custom plates from file."""
+        import tempfile
+        import os
+        
+        # Create temporary custom plates file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+            f.write('Custom_Plate_1\n')
+            f.write('Custom_Plate_2\n')
+            temp_file = f.name
+        
+        # Copy to expected location
+        import shutil
+        shutil.copy(temp_file, 'custom_plate_names.txt')
+        
+        try:
+            result = read_custom_plates_file()
+            assert result == ['Custom_Plate_1', 'Custom_Plate_2']
+        finally:
+            # Clean up
+            os.unlink(temp_file)
+            if os.path.exists('custom_plate_names.txt'):
+                os.unlink('custom_plate_names.txt')
+    
+    def test_read_additional_standard_plates_file_no_file(self):
+        """Test reading additional plates when no file exists."""
+        result = read_additional_standard_plates_file()
+        assert result == {}
+    
+    def test_read_additional_standard_plates_file_with_file(self):
+        """Test reading additional plates from file."""
+        import tempfile
+        import os
+        
+        # Create temporary additional plates file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+            f.write('BP9735_SitukAM:2\n')
+            f.write('BP9735_WCBP1PR:1\n')
+            temp_file = f.name
+        
+        # Copy to expected location
+        import shutil
+        shutil.copy(temp_file, 'additional_standard_plates.txt')
+        
+        try:
+            result = read_additional_standard_plates_file()
+            assert result == {'BP9735_SitukAM': 2, 'BP9735_WCBP1PR': 1}
+        finally:
+            # Clean up
+            os.unlink(temp_file)
+            if os.path.exists('additional_standard_plates.txt'):
+                os.unlink('additional_standard_plates.txt')
+    
+    # Legacy function compatibility tests
+    def test_get_csv_file_compatibility(self):
+        """Test that get_csv_file() still works (calls detect_csv_file())."""
+        result = get_csv_file()
+        assert result.name == 'sample_metadtata.csv'
+    
+    def test_get_custom_plates_compatibility(self):
+        """Test that get_custom_plates() still works (calls read_custom_plates_file())."""
         result = get_custom_plates()
-        assert result == ['Custom_Plate_1', 'Custom_Plate_2']
+        assert result == []  # No file exists, should return empty list
 
 
 class TestFileManagement:
