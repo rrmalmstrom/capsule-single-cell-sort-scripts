@@ -1,0 +1,883 @@
+#!/usr/bin/env python3
+
+"""
+New Python Script - Interactive Development
+Built function by function using conda env sip-lims
+"""
+
+import pandas as pd
+import sys
+from pathlib import Path
+from sqlalchemy import create_engine
+
+
+def read_database_tables():
+    """
+    Read the project_summary.db database and create DataFrames from the two tables.
+    
+    Returns:
+        tuple: (sample_metadata_df, individual_plates_df) - Two DataFrames from the database tables
+        
+    Raises:
+        SystemExit: If database file not found or tables not found
+    """
+    db_path = Path("project_summary.db")
+    
+    # Check if database file exists
+    if not db_path.exists():
+        print(f"FATAL ERROR: Database file 'project_summary.db' not found in working directory")
+        print("Script requires existing database file to proceed.")
+        sys.exit()
+    
+    try:
+        # Create SQLAlchemy engine
+        engine = create_engine(f'sqlite:///{db_path}')
+        
+        # Read sample_metadata table
+        try:
+            sample_metadata_df = pd.read_sql('SELECT * FROM sample_metadata', engine)
+            print(f"✅ Read {len(sample_metadata_df)} records from sample_metadata table")
+        except Exception as e:
+            print(f"FATAL ERROR: Could not read 'sample_metadata' table: {e}")
+            print("Database must contain 'sample_metadata' table.")
+            engine.dispose()
+            sys.exit()
+        
+        # Read individual_plates table
+        try:
+            individual_plates_df = pd.read_sql('SELECT * FROM individual_plates', engine)
+            print(f"✅ Read {len(individual_plates_df)} records from individual_plates table")
+        except Exception as e:
+            print(f"FATAL ERROR: Could not read 'individual_plates' table: {e}")
+            print("Database must contain 'individual_plates' table.")
+            engine.dispose()
+            sys.exit()
+        
+        # Properly dispose of engine
+        engine.dispose()
+        
+        return sample_metadata_df, individual_plates_df
+        
+    except Exception as e:
+        print(f"FATAL ERROR: Could not connect to database {db_path}: {e}")
+        print("Database file may be corrupted or inaccessible.")
+        sys.exit()
+
+
+def read_library_sort_plates():
+    """
+    Read the library_sort_plates.txt file and return a list of plate names.
+    
+    Returns:
+        list: List of plate names from the file
+        
+    Raises:
+        SystemExit: If file not found or incorrectly formatted
+    """
+    file_path = Path("library_sort_plates.txt")
+    
+    # Check if file exists
+    if not file_path.exists():
+        print(f"FATAL ERROR: File 'library_sort_plates.txt' not found in working directory")
+        print("Script requires library_sort_plates.txt file to proceed.")
+        sys.exit()
+    
+    try:
+        # Read file and process lines
+        with open(file_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        
+        plate_list = []
+        for line_num, line in enumerate(lines, 1):
+            line = line.strip()
+            
+            # Skip empty lines
+            if not line:
+                continue
+            
+            # Basic validation - check if line looks like a plate name
+            # Expected format: PROJECT_SAMPLE.NUMBER or CUSTOM_NAME.NUMBER
+            if '.' not in line:
+                print(f"FATAL ERROR: Invalid plate name format on line {line_num}: '{line}'")
+                print("Expected format: 'PROJECT_SAMPLE.NUMBER' (e.g., 'BP9735_SitukAM.1')")
+                sys.exit()
+            
+            # Additional validation - check for reasonable length
+            if len(line) > 50:
+                print(f"FATAL ERROR: Plate name too long on line {line_num}: '{line}'")
+                print("Plate names should be less than 50 characters.")
+                sys.exit()
+            
+            plate_list.append(line)
+        
+        # Check if we found any plates
+        if not plate_list:
+            print(f"FATAL ERROR: No valid plate names found in 'library_sort_plates.txt'")
+            print("File must contain at least one plate name.")
+            sys.exit()
+        
+        print(f"✅ Read {len(plate_list)} plate names from library_sort_plates.txt")
+        return plate_list
+        
+    except Exception as e:
+        print(f"FATAL ERROR: Could not read file 'library_sort_plates.txt': {e}")
+        print("File may be corrupted or inaccessible.")
+        sys.exit()
+
+
+def validate_plates_in_database(plate_list, individual_plates_df):
+    """
+    Validate that all plates in the list exist in the database.
+    
+    Args:
+        plate_list (list): List of plate names from library_sort_plates.txt
+        individual_plates_df (pd.DataFrame): DataFrame from individual_plates table
+        
+    Raises:
+        SystemExit: If any plates are missing from the database
+    """
+    # Get list of plate names from database
+    db_plate_names = set(individual_plates_df['plate_name'].tolist())
+    
+    # Check if all plates in list exist in database
+    missing_plates = []
+    for plate_name in plate_list:
+        if plate_name not in db_plate_names:
+            missing_plates.append(plate_name)
+    
+    if missing_plates:
+        print(f"FATAL ERROR: The following plates from library_sort_plates.txt are not found in the database:")
+        for plate in missing_plates:
+            print(f"  - {plate}")
+        print("All plates in the list must exist in the individual_plates table.")
+        sys.exit()
+    
+    print(f"✅ All {len(plate_list)} plates validated against database")
+
+
+def separate_custom_and_standard_plates(plate_list, individual_plates_df):
+    """
+    Separate plates into custom and standard based on is_custom column.
+    
+    Args:
+        plate_list (list): List of plate names from library_sort_plates.txt
+        individual_plates_df (pd.DataFrame): DataFrame from individual_plates table
+        
+    Returns:
+        tuple: (custom_plates, standard_plates)
+               custom_plates: list of custom plate names
+               standard_plates: list of standard plate names
+    """
+    custom_plates = []
+    standard_plates = []
+    
+    for plate_name in plate_list:
+        plate_row = individual_plates_df[individual_plates_df['plate_name'] == plate_name]
+        if not plate_row.empty:
+            is_custom = bool(plate_row['is_custom'].iloc[0])
+            if is_custom:
+                custom_plates.append(plate_name)
+            else:
+                standard_plates.append(plate_name)
+    
+    print(f"✅ Found {len(custom_plates)} custom plates and {len(standard_plates)} standard plates")
+    return custom_plates, standard_plates
+
+
+def validate_custom_plate_layouts(custom_plates):
+    """
+    Validate and load layout CSV files for custom plates.
+    
+    Args:
+        custom_plates (list): List of custom plate names
+        
+    Returns:
+        dict: Mapping of custom plate names to their layout DataFrames
+        
+    Raises:
+        SystemExit: If layout files are missing or invalid
+    """
+    # Expected column headers for custom plate layout CSV files
+    expected_layout_headers = [
+        'Plate_ID', 'Well_Row', 'Well_Col', 'Well', 'Sample', 'Type',
+        'number_of_cells/capsules', 'Group_1', 'Group_2', 'Group_3'
+    ]
+    
+    custom_layout_data = {}
+    
+    for custom_plate in custom_plates:
+        csv_filename = f"{custom_plate}.csv"
+        csv_path = Path(csv_filename)
+        
+        # Check if layout CSV file exists
+        if not csv_path.exists():
+            print(f"FATAL ERROR: Layout file '{csv_filename}' not found for custom plate '{custom_plate}'")
+            print("Custom plates require corresponding CSV layout files in the working directory.")
+            sys.exit()
+        
+        try:
+            # Read and validate the layout CSV file
+            layout_df = pd.read_csv(csv_path, encoding='utf-8-sig')
+            
+            # Check for required column headers
+            missing_headers = []
+            for header in expected_layout_headers:
+                if header not in layout_df.columns:
+                    missing_headers.append(header)
+            
+            if missing_headers:
+                print(f"FATAL ERROR: Layout file '{csv_filename}' missing required column headers:")
+                for header in missing_headers:
+                    print(f"  - {header}")
+                print(f"Required headers: {expected_layout_headers}")
+                sys.exit()
+            
+            # Validate that Plate_ID column contains the expected plate name
+            plate_ids = layout_df['Plate_ID'].unique()
+            if len(plate_ids) != 1 or plate_ids[0] != custom_plate:
+                print(f"FATAL ERROR: Layout file '{csv_filename}' has incorrect Plate_ID values")
+                print(f"Expected Plate_ID: '{custom_plate}'")
+                print(f"Found Plate_ID values: {list(plate_ids)}")
+                sys.exit()
+            
+            custom_layout_data[custom_plate] = layout_df
+            print(f"✅ Validated layout file for custom plate '{custom_plate}' ({len(layout_df)} wells)")
+            
+        except Exception as e:
+            print(f"FATAL ERROR: Could not read or validate layout file '{csv_filename}': {e}")
+            print("Layout files must be valid CSV format with correct headers.")
+            sys.exit()
+    
+    return custom_layout_data
+
+
+def find_individual_standard_plate_files(standard_plates):
+    """
+    Look for individual CSV layout files for standard plates.
+    
+    Args:
+        standard_plates (list): List of standard plate names
+        
+    Returns:
+        tuple: (plates_with_files, plates_needing_template, individual_layouts)
+               plates_with_files: list of plates that have individual CSV files
+               plates_needing_template: list of plates that need template
+               individual_layouts: dict of plate_name -> DataFrame for found files
+    """
+    # Expected column headers for layout CSV files
+    expected_layout_headers = [
+        'Plate_ID', 'Well_Row', 'Well_Col', 'Well', 'Sample', 'Type',
+        'number_of_cells/capsules', 'Group_1', 'Group_2', 'Group_3'
+    ]
+    
+    individual_layouts = {}
+    plates_with_files = []
+    plates_needing_template = []
+    
+    for standard_plate in standard_plates:
+        csv_filename = f"{standard_plate}.csv"
+        csv_path = Path(csv_filename)
+        
+        if csv_path.exists():
+            try:
+                # Read and validate the layout CSV file (same as custom plates)
+                layout_df = pd.read_csv(csv_path, encoding='utf-8-sig')
+                
+                # Check for required column headers
+                missing_headers = []
+                for header in expected_layout_headers:
+                    if header not in layout_df.columns:
+                        missing_headers.append(header)
+                
+                if missing_headers:
+                    print(f"FATAL ERROR: Layout file '{csv_filename}' missing required column headers:")
+                    for header in missing_headers:
+                        print(f"  - {header}")
+                    print(f"Required headers: {expected_layout_headers}")
+                    sys.exit()
+                
+                # Validate that Plate_ID column contains the expected plate name
+                plate_ids = layout_df['Plate_ID'].unique()
+                if len(plate_ids) != 1 or plate_ids[0] != standard_plate:
+                    print(f"FATAL ERROR: Layout file '{csv_filename}' has incorrect Plate_ID values")
+                    print(f"Expected Plate_ID: '{standard_plate}'")
+                    print(f"Found Plate_ID values: {list(plate_ids)}")
+                    sys.exit()
+                
+                individual_layouts[standard_plate] = layout_df
+                plates_with_files.append(standard_plate)
+                print(f"✅ Found individual layout file for standard plate '{standard_plate}' ({len(layout_df)} wells)")
+                
+            except Exception as e:
+                print(f"FATAL ERROR: Could not read or validate layout file '{csv_filename}': {e}")
+                print("Layout files must be valid CSV format with correct headers.")
+                sys.exit()
+        else:
+            plates_needing_template.append(standard_plate)
+    
+    return plates_with_files, plates_needing_template, individual_layouts
+
+
+def load_standard_template():
+    """
+    Load and validate the standard plate layout template.
+    
+    Returns:
+        pd.DataFrame: Standard template DataFrame
+        
+    Raises:
+        SystemExit: If template file is missing or invalid
+    """
+    # Expected column headers for layout CSV files
+    expected_layout_headers = [
+        'Plate_ID', 'Well_Row', 'Well_Col', 'Well', 'Sample', 'Type',
+        'number_of_cells/capsules', 'Group_1', 'Group_2', 'Group_3'
+    ]
+    
+    template_path = Path("standard_sort_layout.csv")
+    if not template_path.exists():
+        print(f"FATAL ERROR: Standard template file 'standard_sort_layout.csv' not found in working directory")
+        print("Template file is required when individual plate layout files are not available.")
+        sys.exit()
+    
+    try:
+        template_df = pd.read_csv(template_path, encoding='utf-8-sig')
+        
+        # Validate template headers
+        missing_headers = []
+        for header in expected_layout_headers:
+            if header not in template_df.columns:
+                missing_headers.append(header)
+        
+        if missing_headers:
+            print(f"FATAL ERROR: Template file 'standard_sort_layout.csv' missing required column headers:")
+            for header in missing_headers:
+                print(f"  - {header}")
+            print(f"Required headers: {expected_layout_headers}")
+            sys.exit()
+        
+        print(f"✅ Loaded standard template with {len(template_df)} wells")
+        return template_df
+        
+    except Exception as e:
+        print(f"FATAL ERROR: Could not read standard template file 'standard_sort_layout.csv': {e}")
+        print("Template file must be valid CSV format with correct headers.")
+        sys.exit()
+
+
+def apply_template_to_plates(plates_needing_template, template_df, individual_plates_df):
+    """
+    Apply standard template to plates that need it.
+    
+    Args:
+        plates_needing_template (list): List of plates that need template
+        template_df (pd.DataFrame): Standard template DataFrame
+        individual_plates_df (pd.DataFrame): Database plate information
+        
+    Returns:
+        dict: Mapping of plate names to their layout DataFrames
+    """
+    template_layouts = {}
+    
+    for standard_plate in plates_needing_template:
+        # Get sample name for this plate from database
+        plate_row = individual_plates_df[individual_plates_df['plate_name'] == standard_plate]
+        if plate_row.empty:
+            print(f"FATAL ERROR: Could not find plate '{standard_plate}' in database")
+            sys.exit()
+        
+        project = plate_row['project'].iloc[0]
+        sample = plate_row['sample'].iloc[0]
+        
+        # Create a copy of the template for this plate
+        plate_layout = template_df.copy()
+        
+        # Fill in the Plate_ID column with actual plate name
+        plate_layout['Plate_ID'] = standard_plate
+        
+        # Fill in the Sample column with actual sample name for sample wells
+        # (Keep other well types like pos_cntrl, neg_cntrl, unused, ladder as they are)
+        sample_mask = plate_layout['Type'] == 'sample'
+        plate_layout.loc[sample_mask, 'Sample'] = sample
+        
+        template_layouts[standard_plate] = plate_layout
+        print(f"✅ Applied standard template to plate '{standard_plate}' (project: {project}, sample: {sample})")
+    
+    return template_layouts
+
+
+def process_standard_plate_layouts(standard_plates, individual_plates_df, sample_metadata_df):
+    """
+    Process standard plates by looking for individual CSV files or using standard template.
+    
+    Args:
+        standard_plates (list): List of standard plate names
+        individual_plates_df (pd.DataFrame): DataFrame from individual_plates table
+        sample_metadata_df (pd.DataFrame): DataFrame from sample_metadata table
+        
+    Returns:
+        dict: Mapping of standard plate names to their layout DataFrames
+    """
+    # First approach: Look for individual CSV files
+    plates_with_files, plates_needing_template, individual_layouts = find_individual_standard_plate_files(standard_plates)
+    
+    # Second approach: Use standard template for remaining plates
+    template_layouts = {}
+    if plates_needing_template:
+        print(f"✅ Found individual files for {len(plates_with_files)} standard plates")
+        print(f"⚠️  Using standard template for {len(plates_needing_template)} standard plates")
+        
+        template_df = load_standard_template()
+        template_layouts = apply_template_to_plates(plates_needing_template, template_df, individual_plates_df)
+    
+    # Combine both approaches
+    all_standard_layouts = {**individual_layouts, **template_layouts}
+    return all_standard_layouts
+
+
+def create_index_mapping_dictionaries():
+    """
+    Create mapping dictionaries for 384-well to 96-well index plate assignments.
+    
+    Returns:
+        dict: Mapping of 384-well position to (index_set, index_well) tuple
+    """
+    mapping = {}
+    
+    # Generate all 96-well positions (A1-H12)
+    index_wells_96 = []
+    for row in 'ABCDEFGH':
+        for col in range(1, 13):
+            index_wells_96.append(f"{row}{col}")
+    
+    # PE17: Odd rows (A,C,E,G,I,K,M,O) + Odd columns (1,3,5,7,9,11,13,15,17,19,21,23)
+    pe17_wells = []
+    for row_idx, row in enumerate(['A','C','E','G','I','K','M','O']):  # 8 odd rows
+        for col_idx, col in enumerate([1,3,5,7,9,11,13,15,17,19,21,23]):  # 12 odd columns
+            pe17_wells.append(f"{row}{col}")
+    
+    # PE18: Even rows (B,D,F,H,J,L,N,P) + Odd columns (1,3,5,7,9,11,13,15,17,19,21,23)
+    pe18_wells = []
+    for row_idx, row in enumerate(['B','D','F','H','J','L','N','P']):  # 8 even rows
+        for col_idx, col in enumerate([1,3,5,7,9,11,13,15,17,19,21,23]):  # 12 odd columns
+            pe18_wells.append(f"{row}{col}")
+    
+    # PE19: Odd rows (A,C,E,G,I,K,M,O) + Even columns (2,4,6,8,10,12,14,16,18,20,22,24)
+    pe19_wells = []
+    for row_idx, row in enumerate(['A','C','E','G','I','K','M','O']):  # 8 odd rows
+        for col_idx, col in enumerate([2,4,6,8,10,12,14,16,18,20,22,24]):  # 12 even columns
+            pe19_wells.append(f"{row}{col}")
+    
+    # PE20: Even rows (B,D,F,H,J,L,N,P) + Even columns (2,4,6,8,10,12,14,16,18,20,22,24)
+    pe20_wells = []
+    for row_idx, row in enumerate(['B','D','F','H','J','L','N','P']):  # 8 even rows
+        for col_idx, col in enumerate([2,4,6,8,10,12,14,16,18,20,22,24]):  # 12 even columns
+            pe20_wells.append(f"{row}{col}")
+    
+    # Map 384-well positions to (index_set, index_well) tuples
+    for i, well_384 in enumerate(pe17_wells):
+        mapping[well_384] = ('PE17', index_wells_96[i])
+    
+    for i, well_384 in enumerate(pe18_wells):
+        mapping[well_384] = ('PE18', index_wells_96[i])
+    
+    for i, well_384 in enumerate(pe19_wells):
+        mapping[well_384] = ('PE19', index_wells_96[i])
+    
+    for i, well_384 in enumerate(pe20_wells):
+        mapping[well_384] = ('PE20', index_wells_96[i])
+    
+    print(f"✅ Created index mapping for {len(mapping)} wells (4 sets × 96 wells each)")
+    return mapping
+
+
+def add_index_columns_to_plates(all_plate_layouts):
+    """
+    Add index assignment columns to all plate layout DataFrames.
+    
+    Args:
+        all_plate_layouts (dict): Dictionary of plate_name -> DataFrame
+        
+    Returns:
+        dict: Updated dictionary with index columns added to each DataFrame
+    """
+    # Create the mapping dictionary
+    index_mapping = create_index_mapping_dictionaries()
+    
+    updated_layouts = {}
+    
+    for plate_name, plate_df in all_plate_layouts.items():
+        # Create a copy to avoid modifying original
+        updated_df = plate_df.copy()
+        
+        # Initialize new columns
+        updated_df['Index_Set'] = ''
+        updated_df['Index_Well'] = ''
+        updated_df['Index_Name'] = ''
+        
+        # Apply mapping to each well
+        for idx, row in updated_df.iterrows():
+            well_position = row['Well']
+            
+            # Look up the index assignment for ALL wells (including unused/ladder)
+            if well_position in index_mapping:
+                index_set, index_well = index_mapping[well_position]
+                
+                # Create index name with leading zero for columns < 10
+                row_letter = index_well[0]
+                col_number = int(index_well[1:])
+                if col_number < 10:
+                    index_name = f"{index_set}_{row_letter}0{col_number}"
+                else:
+                    index_name = f"{index_set}_{row_letter}{col_number}"
+                
+                # Update the DataFrame
+                updated_df.at[idx, 'Index_Set'] = index_set
+                updated_df.at[idx, 'Index_Well'] = index_well
+                updated_df.at[idx, 'Index_Name'] = index_name
+        
+        updated_layouts[plate_name] = updated_df
+        
+        # Count assigned indexes for this plate
+        assigned_count = len(updated_df[updated_df['Index_Set'] != ''])
+        print(f"✅ Added index assignments to plate '{plate_name}' ({assigned_count} wells assigned)")
+    
+    return updated_layouts
+
+
+# def export_plates_to_csv(all_plate_layouts_with_indexes):
+#     """
+#     Export each plate DataFrame to a separate CSV file for inspection.
+#
+#     Args:
+#         all_plate_layouts_with_indexes (dict): Dictionary of plate_name -> DataFrame with index columns
+#     """
+#     for plate_name, plate_df in all_plate_layouts_with_indexes.items():
+#         # Use plate name as filename (replace any problematic characters)
+#         safe_filename = plate_name.replace('/', '_').replace('\\', '_')
+#         csv_filename = f"{safe_filename}.csv"
+#
+#         # Export to CSV
+#         plate_df.to_csv(csv_filename, index=False)
+#         print(f"✅ Exported plate '{plate_name}' to '{csv_filename}' ({len(plate_df)} wells)")
+#
+#     print(f"✅ Exported {len(all_plate_layouts_with_indexes)} plate CSV files")
+
+
+def create_illumina_index_files(all_plate_layouts_with_indexes, individual_plates_df):
+    """
+    Create Illumina index transfer files for each plate in a dedicated subfolder.
+    
+    Args:
+        all_plate_layouts_with_indexes (dict): Dictionary of plate_name -> DataFrame with index columns
+        individual_plates_df (pd.DataFrame): Database plate information for barcode lookup
+    """
+    # Create output directory if it doesn't exist
+    output_dir = Path("Illumina_index_transfer_files")
+    output_dir.mkdir(exist_ok=True)
+    print(f"✅ Created/verified output directory: {output_dir}")
+    for plate_name, plate_df in all_plate_layouts_with_indexes.items():
+        # Get barcode for this plate from database
+        plate_row = individual_plates_df[individual_plates_df['plate_name'] == plate_name]
+        if plate_row.empty:
+            print(f"⚠️  WARNING: Could not find barcode for plate '{plate_name}' in database")
+            continue
+        
+        lib_plate_id = plate_row['barcode'].iloc[0]
+        
+        # Check which index sets have any non-unused/non-ladder wells
+        included_index_sets = []
+        for index_set in ['PE17', 'PE18', 'PE19', 'PE20']:
+            # Get all wells for this index set (should be 96 wells each after our fix)
+            index_wells = plate_df[plate_df['Index_Set'] == index_set]
+            
+            # Check if any wells are NOT unused or ladder
+            non_excluded_wells = index_wells[~index_wells['Type'].isin(['unused', 'ladder'])]
+            
+            if len(non_excluded_wells) > 0:
+                included_index_sets.append(index_set)
+                print(f"  Including {index_set}: {len(non_excluded_wells)} active wells out of {len(index_wells)} total")
+            else:
+                print(f"  Excluding {index_set}: all {len(index_wells)} wells are unused/ladder")
+        
+        if not included_index_sets:
+            print(f"⚠️  WARNING: No index sets to include for plate '{plate_name}' - all wells are unused/ladder")
+            continue
+        
+        # Create output data for included index sets
+        output_rows = []
+        for index_set in included_index_sets:
+            # Get ALL wells for this index set (including unused/ladder)
+            index_wells = plate_df[plate_df['Index_Set'] == index_set].copy()
+            
+            for _, row in index_wells.iterrows():
+                output_rows.append({
+                    'Illumina_index_set': row['Index_Set'],
+                    'Illumina_source_well': row['Index_Well'],
+                    'Lib_plate_name': row['Plate_ID'],
+                    'Lib_plate_ID': lib_plate_id,
+                    'Lib_plate_well': row['Well'],
+                    'Primer_volume_(uL)': 2
+                })
+        
+        # Create output DataFrame and save to CSV
+        if output_rows:
+            output_df = pd.DataFrame(output_rows)
+            
+            # Extract column and row from Lib_plate_well for sorting
+            output_df['sort_col'] = output_df['Lib_plate_well'].str.extract(r'([A-P])(\d+)')[1].astype(int)
+            output_df['sort_row'] = output_df['Lib_plate_well'].str.extract(r'([A-P])(\d+)')[0]
+            
+            # Sort by index set first, then by sort plate column, then by sort plate row
+            output_df = output_df.sort_values(['Illumina_index_set', 'sort_col', 'sort_row'])
+            
+            # Remove the temporary sorting columns
+            output_df = output_df.drop(['sort_col', 'sort_row'], axis=1)
+            
+            # Create filename in subfolder
+            safe_filename = plate_name.replace('/', '_').replace('\\', '_')
+            csv_filename = output_dir / f"Illumina_index_{safe_filename}.csv"
+            
+            # Export to CSV
+            output_df.to_csv(csv_filename, index=False)
+            print(f"✅ Created Illumina index file '{csv_filename}' with {len(output_df)} wells ({len(included_index_sets)} index sets)")
+        
+    print(f"✅ Completed Illumina index file generation")
+
+
+def select_wells_for_fa_transfer(plate_df):
+    """
+    Select 96 wells from a 384-well plate for FA transfer using column-wise numbering.
+    Excludes columns that only contain unused + ladder wells, but always includes ladder wells.
+    
+    Args:
+        plate_df (pd.DataFrame): Plate layout DataFrame
+        
+    Returns:
+        pd.DataFrame: Selected wells for FA transfer
+    """
+    # Step 1: Identify valid columns (have samples, controls, etc. - not just unused/ladder)
+    valid_columns = []
+    ladder_only_columns = []
+    
+    for col in range(1, 25):  # Columns 1-24
+        col_wells = plate_df[plate_df['Well_Col'] == col]
+        non_unused_wells = col_wells[col_wells['Type'] != 'unused']
+        non_unused_non_ladder_wells = col_wells[~col_wells['Type'].isin(['unused', 'ladder'])]
+        
+        if len(non_unused_non_ladder_wells) > 0:
+            # Column has samples/controls - include it
+            valid_columns.append(col)
+        elif len(non_unused_wells) > 0:
+            # Column only has unused + ladder wells - exclude column but note ladder
+            ladder_only_columns.append(col)
+    
+    if not valid_columns:
+        print(f"⚠️  WARNING: No valid columns found for FA transfer")
+        return pd.DataFrame()
+    
+    print(f"  Valid columns for FA transfer: {valid_columns}")
+    if ladder_only_columns:
+        print(f"  Ladder-only columns (excluded): {ladder_only_columns}")
+    
+    # Step 2: Get wells from valid columns only
+    valid_wells = plate_df[plate_df['Well_Col'].isin(valid_columns)].copy()
+    
+    # Step 3: Get ladder wells from excluded columns
+    excluded_ladder_wells = plate_df[
+        (plate_df['Well_Col'].isin(ladder_only_columns)) &
+        (plate_df['Type'] == 'ladder')
+    ].copy()
+    
+    # Step 4: Add sequential numbering (column-wise within valid columns)
+    valid_wells = valid_wells.sort_values(['Well_Col', 'Well_Row'])
+    valid_wells['sequential_number'] = range(1, len(valid_wells) + 1)
+    
+    # Step 5: Select wells accounting for ladder space
+    total_valid_wells = len(valid_wells)
+    num_excluded_ladders = len(excluded_ladder_wells)
+    wells_to_select = 96 - num_excluded_ladders
+    
+    if total_valid_wells <= wells_to_select:
+        selected_wells = valid_wells
+        print(f"  Selected all {total_valid_wells} wells from valid columns")
+    else:
+        # Need to select first 48 + last (wells_to_select - 48) to make room for ladder
+        first_48 = valid_wells.head(48)
+        last_n_count = wells_to_select - 48
+        
+        # Skip the very last well to make room for ladder - take from position -(last_n_count+1) to -1
+        if last_n_count > 0:
+            last_n = valid_wells.iloc[-(last_n_count+1):-1]
+        else:
+            last_n = pd.DataFrame()
+        
+        selected_wells = pd.concat([first_48, last_n])
+        print(f"  Selected {wells_to_select} wells (first 48 + last {last_n_count}, skipping very last well) from {total_valid_wells} total wells")
+    
+    # Step 6: Add excluded ladder wells
+    if len(excluded_ladder_wells) > 0:
+        selected_wells = pd.concat([selected_wells, excluded_ladder_wells])
+        print(f"  Added {len(excluded_ladder_wells)} ladder well(s) from excluded columns")
+    
+    return selected_wells.drop('sequential_number', axis=1, errors='ignore')
+
+
+def assign_fa_wells(selected_wells_df):
+    """
+    Assign FA well positions to selected wells.
+    
+    Args:
+        selected_wells_df (pd.DataFrame): Selected wells DataFrame
+        
+    Returns:
+        pd.DataFrame: DataFrame with FA_Well column added
+    """
+    # Sort by Index_Set, then column, then row
+    sorted_df = selected_wells_df.sort_values(['Index_Set', 'Well_Col', 'Well_Row']).copy()
+    
+    # Generate 96-well positions column-wise (A1, B1, C1, ..., H1, A2, B2, ...)
+    fa_wells = []
+    rows = 'ABCDEFGH'
+    for col in range(1, 13):  # Columns 1-12 in 96-well plate
+        for row in rows:  # Rows A-H
+            fa_wells.append(f"{row}{col}")
+    
+    # Initialize FA_Well column
+    sorted_df['FA_Well'] = ''
+    
+    # Handle ladder wells first (always go to H12)
+    ladder_wells = sorted_df[sorted_df['Type'] == 'ladder']
+    if len(ladder_wells) > 0:
+        # Assign all ladder wells to H12 (if multiple ladders, they'll overwrite - last one wins)
+        sorted_df.loc[sorted_df['Type'] == 'ladder', 'FA_Well'] = 'H12'
+        print(f"  Assigned {len(ladder_wells)} ladder well(s) to FA well H12")
+    
+    # Assign FA wells to non-ladder wells
+    non_ladder_wells = sorted_df[sorted_df['Type'] != 'ladder']
+    fa_index = 0
+    
+    for idx in non_ladder_wells.index:
+        # Skip H12 if it's reserved for ladder
+        if fa_wells[fa_index] == 'H12' and len(ladder_wells) > 0:
+            fa_index += 1
+            if fa_index >= len(fa_wells):
+                break
+        
+        sorted_df.at[idx, 'FA_Well'] = fa_wells[fa_index]
+        fa_index += 1
+        
+        if fa_index >= len(fa_wells):
+            break
+    
+    print(f"  Assigned FA wells to {len(sorted_df)} selected wells")
+    return sorted_df
+
+
+def create_fa_transfer_files(all_plate_layouts_with_indexes, individual_plates_df):
+    """
+    Create FA transfer files for each plate.
+    
+    Args:
+        all_plate_layouts_with_indexes (dict): Dictionary of plate_name -> DataFrame with index columns
+        individual_plates_df (pd.DataFrame): Database plate information for barcode lookup
+    """
+    # Create output directory if it doesn't exist
+    output_dir = Path("FA_transfer_files")
+    output_dir.mkdir(exist_ok=True)
+    print(f"✅ Created/verified output directory: {output_dir}")
+    
+    for plate_name, plate_df in all_plate_layouts_with_indexes.items():
+        print(f"\n🔄 Processing FA transfer for plate '{plate_name}'")
+        
+        # Get barcode for this plate from database
+        plate_row = individual_plates_df[individual_plates_df['plate_name'] == plate_name]
+        if plate_row.empty:
+            print(f"⚠️  WARNING: Could not find barcode for plate '{plate_name}' in database")
+            continue
+        
+        barcode = plate_row['barcode'].iloc[0]
+        
+        # Step 1: Select wells for FA transfer
+        selected_wells = select_wells_for_fa_transfer(plate_df)
+        if selected_wells.empty:
+            print(f"⚠️  WARNING: No wells selected for FA transfer for plate '{plate_name}'")
+            continue
+        
+        # Step 2: Assign FA well positions
+        fa_wells_df = assign_fa_wells(selected_wells)
+        
+        # Step 3: Create output DataFrame with required columns
+        output_rows = []
+        for _, row in fa_wells_df.iterrows():
+            output_rows.append({
+                'Library_Plate_Barcode': f"h{barcode}",
+                'Dilution_Plate_Barcode': f"{barcode}D",
+                'FA_Plate_Barcode': f"{barcode}F",
+                'Library_Well': row['Well'],
+                'FA_Well': row['FA_Well'],
+                'Nextera_Vol_Add': 30,
+                'Dilution_Vol': 2.4,
+                'FA_Vol_Add': 2.4,
+                'Dilution_Plate_Preload': 10,
+                'Total_buffer_aspiration': 40
+            })
+        
+        # Step 4: Create output DataFrame and save to CSV
+        if output_rows:
+            output_df = pd.DataFrame(output_rows)
+            
+            # Create filename
+            safe_filename = plate_name.replace('/', '_').replace('\\', '_')
+            csv_filename = output_dir / f"FA_plate_transfer_{safe_filename}.csv"
+            
+            # Export to CSV
+            output_df.to_csv(csv_filename, index=False)
+            print(f"✅ Created FA transfer file '{csv_filename}' with {len(output_df)} wells")
+    
+    print(f"\n✅ Completed FA transfer file generation")
+
+
+def main():
+    """
+    Main function - entry point for our script.
+    """
+    print("Starting new script...")
+    print("Using conda environment: sip-lims")
+    
+    # Read database tables
+    sample_metadata_df, individual_plates_df = read_database_tables()
+    
+    # Read library sort plates file
+    plate_list = read_library_sort_plates()
+    
+    # Validate that all plates exist in database
+    validate_plates_in_database(plate_list, individual_plates_df)
+    
+    # Separate custom and standard plates
+    custom_plates, standard_plates = separate_custom_and_standard_plates(plate_list, individual_plates_df)
+    
+    # Validate and load custom plate layout files
+    custom_layout_data = validate_custom_plate_layouts(custom_plates)
+    
+    # Process standard plate layouts
+    standard_layout_data = process_standard_plate_layouts(standard_plates, individual_plates_df, sample_metadata_df)
+    
+    # Combine all plate layout data
+    all_plate_layouts = {**custom_layout_data, **standard_layout_data}
+    print(f"✅ Total plates processed: {len(all_plate_layouts)} ({len(custom_layout_data)} custom + {len(standard_layout_data)} standard)")
+    
+    # Add index assignments to all plates
+    all_plate_layouts_with_indexes = add_index_columns_to_plates(all_plate_layouts)
+    
+    # Create Illumina index transfer files
+    create_illumina_index_files(all_plate_layouts_with_indexes, individual_plates_df)
+    
+    # Create FA transfer files
+    create_fa_transfer_files(all_plate_layouts_with_indexes, individual_plates_df)
+    
+    print("Script completed successfully!")
+
+
+if __name__ == "__main__":
+    main()
