@@ -1,8 +1,72 @@
 #!/usr/bin/env python3
 
 """
-New Python Script - Interactive Development
-Built function by function using conda env sip-lims
+Laboratory Library Creation Files Generation Script
+
+This script processes sorted microwell plates to generate comprehensive library creation
+files including index assignments, FA transfer protocols, and master data tracking
+following laboratory automation standards.
+
+USAGE: python generate_lib_creation_files.py
+
+CRITICAL REQUIREMENTS:
+- MUST use sip-lims conda environment
+- Follows existing SPS script patterns
+- Implements comprehensive error handling with "FATAL ERROR" messaging
+- Supports both first-run and subsequent-run workflows
+
+Features:
+- Automatic detection of run type (first vs subsequent)
+- Database-driven plate validation and metadata management
+- Custom and standard plate layout processing
+- 384-well to 96-well index mapping (PE17, PE18, PE19, PE20)
+- FA (Fragment Analyzer) well selection and transfer file generation
+- Illumina index transfer file creation
+- Master library dataframe with comprehensive well tracking
+- Timestamped file archiving and organized folder management
+- Duplicate plate prevention for data integrity
+
+Input File Organization (2_library_creation/ folder):
+- library_sort_plates.txt: List of plates to process
+- {plate_name}.csv: Individual plate layout files (custom plates required, standard plates optional)
+- standard_sort_layout.csv: Template for standard plates without individual layouts
+
+Output File Organization (2_library_creation/ folder):
+- Illumina_index_transfer_files/: Index primer transfer protocols
+- FA_transfer_files/: Fragment Analyzer transfer protocols
+- FA_input_files/: Fragment Analyzer input manifests
+- previously_processed_files/: Organized archive of processed input files
+
+Database Schema (Three-Table Architecture):
+- sample_metadata table: Project and sample information
+- individual_plates table: Individual plate data with barcodes
+- master_plate_data table: Comprehensive well-level data with index and FA assignments
+- Database file: project_summary.db (working directory)
+
+Index Assignment System:
+- 384-well plates mapped to four 96-well index sets (PE17, PE18, PE19, PE20)
+- Odd/even row and column pattern mapping for systematic coverage
+- Index names with zero-padded format (e.g., PE17_A01, PE18_B12)
+- Unused and ladder wells excluded from index assignments
+
+FA Well Selection Logic:
+- Column-wise selection prioritizing sample and control wells
+- 96-well FA plate format with systematic well assignment
+- Ladder wells automatically assigned to H12 position
+- Smart column filtering to exclude unused-only columns
+
+File Management:
+- Input files moved to previously_processed_files/ with timestamps
+- Plate layout files preserved without timestamp modification
+- Database and master files archived before updates
+- Comprehensive error logging and validation
+
+Safety Features:
+- Laboratory-grade error messaging with "FATAL ERROR" prefix
+- Comprehensive plate validation against database records
+- Duplicate plate detection and prevention
+- Automatic file archiving before modifications
+- Consistent error handling with sys.exit() (no exit codes)
 """
 
 import pandas as pd
@@ -76,12 +140,12 @@ def read_library_sort_plates():
     Raises:
         SystemExit: If file not found or incorrectly formatted
     """
-    file_path = Path("library_sort_plates.txt")
+    file_path = Path("2_library_creation/library_sort_plates.txt")
     
     # Check if file exists
     if not file_path.exists():
-        print(f"FATAL ERROR: File 'library_sort_plates.txt' not found in working directory")
-        print("Script requires library_sort_plates.txt file to proceed.")
+        print(f"FATAL ERROR: File 'library_sort_plates.txt' not found in 2_library_creation folder")
+        print("Script requires library_sort_plates.txt file in 2_library_creation/ to proceed.")
         sys.exit()
     
     try:
@@ -209,12 +273,12 @@ def validate_custom_plate_layouts(custom_plates):
     
     for custom_plate in custom_plates:
         csv_filename = f"{custom_plate}.csv"
-        csv_path = Path(csv_filename)
+        csv_path = Path(f"2_library_creation/{csv_filename}")
         
         # Check if layout CSV file exists
         if not csv_path.exists():
             print(f"FATAL ERROR: Layout file '{csv_filename}' not found for custom plate '{custom_plate}'")
-            print("Custom plates require corresponding CSV layout files in the working directory.")
+            print("Custom plates require corresponding CSV layout files in the 2_library_creation/ folder.")
             sys.exit()
         
         try:
@@ -243,7 +307,7 @@ def validate_custom_plate_layouts(custom_plates):
                 sys.exit()
             
             custom_layout_data[custom_plate] = layout_df
-            print(f"✅ Validated layout file for custom plate '{custom_plate}' ({len(layout_df)} wells)")
+            # Validation successful - no detailed output needed
             
         except Exception as e:
             print(f"FATAL ERROR: Could not read or validate layout file '{csv_filename}': {e}")
@@ -278,7 +342,7 @@ def find_individual_standard_plate_files(standard_plates):
     
     for standard_plate in standard_plates:
         csv_filename = f"{standard_plate}.csv"
-        csv_path = Path(csv_filename)
+        csv_path = Path(f"2_library_creation/{csv_filename}")
         
         if csv_path.exists():
             try:
@@ -308,7 +372,7 @@ def find_individual_standard_plate_files(standard_plates):
                 
                 individual_layouts[standard_plate] = layout_df
                 plates_with_files.append(standard_plate)
-                print(f"✅ Found individual layout file for standard plate '{standard_plate}' ({len(layout_df)} wells)")
+                # Found individual file - no detailed output needed
                 
             except Exception as e:
                 print(f"FATAL ERROR: Could not read or validate layout file '{csv_filename}': {e}")
@@ -336,10 +400,10 @@ def load_standard_template():
         'number_of_cells/capsules', 'Group_1', 'Group_2', 'Group_3'
     ]
     
-    template_path = Path("standard_sort_layout.csv")
+    template_path = Path("2_library_creation/standard_sort_layout.csv")
     if not template_path.exists():
-        print(f"FATAL ERROR: Standard template file 'standard_sort_layout.csv' not found in working directory")
-        print("Template file is required when individual plate layout files are not available.")
+        print(f"FATAL ERROR: Standard template file 'standard_sort_layout.csv' not found in 2_library_creation folder")
+        print("Template file is required in 2_library_creation/ when individual plate layout files are not available.")
         sys.exit()
     
     try:
@@ -489,7 +553,7 @@ def create_index_mapping_dictionaries():
     for i, well_384 in enumerate(pe20_wells):
         mapping[well_384] = ('PE20', index_wells_96[i])
     
-    print(f"✅ Created index mapping for {len(mapping)} wells (4 sets × 96 wells each)")
+    # Index mapping created - no detailed output needed
     return mapping
 
 
@@ -542,7 +606,7 @@ def add_index_columns_to_plates(all_plate_layouts):
         
         # Count assigned indexes for this plate
         assigned_count = len(updated_df[updated_df['Index_Set'] != ''])
-        print(f"✅ Added index assignments to plate '{plate_name}' ({assigned_count} wells assigned)")
+        # Index assignments added - no detailed output needed
     
     return updated_layouts
 
@@ -575,7 +639,7 @@ def create_illumina_index_files(all_plate_layouts_with_indexes, individual_plate
         individual_plates_df (pd.DataFrame): Database plate information for barcode lookup
     """
     # Create output directory if it doesn't exist
-    output_dir = Path("Illumina_index_transfer_files")
+    output_dir = Path("2_library_creation/Illumina_index_transfer_files")
     output_dir.mkdir(exist_ok=True)
     print(f"✅ Created/verified output directory: {output_dir}")
     for plate_name, plate_df in all_plate_layouts_with_indexes.items():
@@ -642,7 +706,7 @@ def create_illumina_index_files(all_plate_layouts_with_indexes, individual_plate
             
             # Export to CSV
             output_df.to_csv(csv_filename, index=False)
-            print(f"✅ Created Illumina index file '{csv_filename}' with {len(output_df)} wells ({len(included_index_sets)} index sets)")
+            # Illumina index file created - no detailed output needed
         
     print(f"✅ Completed Illumina index file generation")
 
@@ -790,12 +854,12 @@ def create_fa_transfer_files(fa_well_assignments, individual_plates_df):
         individual_plates_df (pd.DataFrame): Database plate information for barcode lookup
     """
     # Create output directory if it doesn't exist
-    output_dir = Path("FA_transfer_files")
+    output_dir = Path("2_library_creation/FA_transfer_files")
     output_dir.mkdir(exist_ok=True)
-    print(f"✅ Created/verified output directory: {output_dir}")
+    # Directory created - no output needed
     
     for plate_name, fa_wells_df in fa_well_assignments.items():
-        print(f"\n🔄 Processing FA transfer for plate '{plate_name}'")
+        # Processing FA transfer - no detailed output needed
         
         # Skip plates with no FA well assignments
         if fa_wells_df.empty:
@@ -851,12 +915,12 @@ def create_fa_input_files(fa_well_assignments, individual_plates_df):
         individual_plates_df (pd.DataFrame): Database plate information for barcode lookup
     """
     # Create output directory if it doesn't exist
-    output_dir = Path("FA_input_files")
+    output_dir = Path("2_library_creation/FA_input_files")
     output_dir.mkdir(exist_ok=True)
     print(f"✅ Created/verified output directory: {output_dir}")
     
     for plate_name, fa_wells_df in fa_well_assignments.items():
-        print(f"\n🔄 Processing FA input for plate '{plate_name}'")
+        # Processing FA input - no detailed output needed
         
         # Skip plates with no FA well assignments
         if fa_wells_df.empty:
@@ -968,7 +1032,7 @@ def create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments,
     Returns:
         pd.DataFrame: Master DataFrame with all wells and FA well assignments where applicable
     """
-    print("\n🔄 Creating master DataFrame...")
+    # Creating master DataFrame - no output needed
     
     # Step 1: Concatenate all plate DataFrames
     all_plate_dfs = []
@@ -1050,7 +1114,7 @@ def create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments,
         df_to_process = master_df.copy()
     
     # Step 4: Add plate barcodes and sort before cleaning
-    print(f"\n🔄 Adding plate barcodes and sorting master DataFrame...")
+    # Adding barcodes and sorting - no output needed
     
     # Add plate barcodes for all wells
     for plate_name in df_to_process['Plate_Name'].unique():
@@ -1082,7 +1146,7 @@ def create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments,
     print(f"  Sorted DataFrame by barcode (numerically), well column, then well row")
     
     # Step 5: Clean up the master DataFrame
-    print(f"\n🔄 Cleaning master DataFrame...")
+    # Cleaning DataFrame - no output needed
     cleaned_df = df_to_process.copy()
     
     # Remove specified columns
@@ -1134,7 +1198,7 @@ def create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments,
         print(f"  Reordered columns: Plate_Barcode positioned after index columns")
     
     # Save cleaned master DataFrame to CSV for inspection
-    output_filename = "master_dataframe_cleaned.csv"
+    output_filename = "library_dataframe.csv"
     cleaned_df.to_csv(output_filename, index=False)
     print(f"  Saved cleaned master DataFrame to '{output_filename}' for inspection")
     
@@ -1146,7 +1210,7 @@ def archive_database_file():
     Archive existing database file with timestamp suffix.
     Follows the same archiving pattern as generate_barcode_labels.py.
     """
-    print("\n🔄 Archiving existing database...")
+    # Archiving database - no output needed
     
     db_path = Path("project_summary.db")
     
@@ -1180,7 +1244,7 @@ def update_database_with_master_table(master_df, sample_metadata_df, individual_
         sample_metadata_df (pd.DataFrame): Existing sample metadata (unchanged)
         individual_plates_df (pd.DataFrame): Existing individual plates (unchanged)
     """
-    print("\n🔄 Creating updated database with master DataFrame table...")
+    # Creating updated database - no output needed
     
     db_path = Path("project_summary.db")
     
@@ -1231,7 +1295,7 @@ def detect_run_type():
         try:
             existing_master_df = pd.read_sql('SELECT * FROM master_plate_data', engine)
             engine.dispose()
-            print(f"🔄 SUBSEQUENT RUN DETECTED: Found existing master_plate_data table with {len(existing_master_df)} records")
+            print(f"🔄 SUBSEQUENT RUN DETECTED")
             return False, existing_master_df
         except Exception:
             # Table doesn't exist - first run
@@ -1279,14 +1343,14 @@ def validate_no_duplicate_plates(plate_list, existing_master_df):
         print("Remove these plates from library_sort_plates.txt or use different plate names.")
         sys.exit()
     
-    print(f"✅ Validated {len(plate_list)} new plates against {len(previously_processed)} previously processed plates")
+    # Duplicate validation successful - no detailed output needed
 
 
 def archive_master_csv_file():
     """
     Archive existing master DataFrame CSV file with timestamp suffix.
     """
-    csv_path = Path("master_dataframe_cleaned.csv")
+    csv_path = Path("library_dataframe.csv")
     
     if csv_path.exists():
         timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
@@ -1294,25 +1358,26 @@ def archive_master_csv_file():
         archive_dir.mkdir(exist_ok=True)
         
         # Create archive name with timestamp suffix
-        stem = csv_path.stem  # "master_dataframe_cleaned"
+        stem = csv_path.stem  # "library_dataframe"
         suffix = csv_path.suffix  # ".csv"
         archive_name = f"{stem}_{timestamp}{suffix}"
         archive_path = archive_dir / archive_name
         
         shutil.move(str(csv_path), str(archive_path))
-        print(f"  Archived existing master CSV: {archive_path}")
+        # Master CSV archived - no detailed output needed
     else:
-        print("  No existing master CSV file to archive")
+        # No master CSV to archive - no output needed
+        pass
 
 
 def create_processed_files_directories():
     """
     Create directory structure for organizing processed input files.
     """
-    print("\n🔄 Creating processed files directory structure...")
+    # Creating directory structure - no output needed
     
     # Create main directory
-    processed_dir = Path("previously_processed_files")
+    processed_dir = Path("2_library_creation/previously_processed_files")
     processed_dir.mkdir(exist_ok=True)
     
     # Create subdirectories
@@ -1322,10 +1387,20 @@ def create_processed_files_directories():
     sorted_plates_dir = processed_dir / "list_of_sorted_plates"
     sorted_plates_dir.mkdir(exist_ok=True)
     
-    print(f"✅ Created directory structure:")
-    print(f"  - {processed_dir}")
-    print(f"  - {layout_files_dir}")
-    print(f"  - {sorted_plates_dir}")
+    # Directory structure created - no detailed output needed
+    
+    # Create main directory
+    processed_dir = Path("2_library_creation/previously_processed_files")
+    processed_dir.mkdir(exist_ok=True)
+    
+    # Create subdirectories
+    layout_files_dir = processed_dir / "plate_layout_files"
+    layout_files_dir.mkdir(exist_ok=True)
+    
+    sorted_plates_dir = processed_dir / "list_of_sorted_plates"
+    sorted_plates_dir.mkdir(exist_ok=True)
+    
+    # Directory structure created - no detailed output needed
 
 
 def move_processed_input_files(processed_plates):
@@ -1335,31 +1410,29 @@ def move_processed_input_files(processed_plates):
     Args:
         processed_plates (list): List of plate names that were processed
     """
-    print("\n🔄 Moving processed input files...")
+    # Moving processed files - no output needed
     
     timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
     
     # Move library_sort_plates.txt
-    library_file = Path("library_sort_plates.txt")
+    library_file = Path("2_library_creation/library_sort_plates.txt")
     if library_file.exists():
-        dest_dir = Path("previously_processed_files/list_of_sorted_plates")
+        dest_dir = Path("2_library_creation/previously_processed_files/list_of_sorted_plates")
         dest_file = dest_dir / f"library_sort_plates_{timestamp}.txt"
         shutil.move(str(library_file), str(dest_file))
-        print(f"  Moved library_sort_plates.txt → {dest_file}")
+        # Library sort plates file moved - no detailed output needed
     
     # Move layout CSV files for processed plates
     layout_files_moved = 0
     for plate_name in processed_plates:
-        csv_file = Path(f"{plate_name}.csv")
+        csv_file = Path(f"2_library_creation/{plate_name}.csv")
         if csv_file.exists():
             # Skip the standard template file
             if csv_file.name == "standard_sort_layout.csv":
                 continue
                 
-            dest_dir = Path("previously_processed_files/plate_layout_files")
-            stem = csv_file.stem
-            suffix = csv_file.suffix
-            dest_file = dest_dir / f"{stem}_{timestamp}{suffix}"
+            dest_dir = Path("2_library_creation/previously_processed_files/plate_layout_files")
+            dest_file = dest_dir / csv_file.name
             shutil.move(str(csv_file), str(dest_file))
             print(f"  Moved {csv_file.name} → {dest_file}")
             layout_files_moved += 1
@@ -1378,7 +1451,7 @@ def perform_fa_well_selection(all_plate_layouts_with_indexes, individual_plates_
     Returns:
         dict: Dictionary of plate_name -> DataFrame with FA well assignments
     """
-    print("\n🔄 Performing FA well selection for all plates...")
+    # Performing FA well selection - no output needed
     
     fa_well_assignments = {}
     
@@ -1467,13 +1540,13 @@ def main():
         master_df = create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments, individual_plates_df)
     else:
         # Subsequent run: create new data, clean it, then append to existing
-        print(f"\n🔄 Processing new plates for subsequent run...")
+        # Processing new plates for subsequent run - no output needed
         
         # Create new master DataFrame (this will be uncleaned with all columns)
         new_master_df_raw = create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments, individual_plates_df)
         
         # Clean the new DataFrame using the same logic as the existing one
-        print(f"🔄 Cleaning new master DataFrame to match existing structure...")
+        # Cleaning new master DataFrame - no output needed
         new_master_df_cleaned = new_master_df_raw.copy()
         
         # Remove the same columns that were removed from existing DataFrame
@@ -1518,7 +1591,7 @@ def main():
             print(f"  Reordered columns to match existing structure")
         
         # Validate that DataFrames can be concatenated
-        print(f"\n🔄 Validating DataFrame compatibility for concatenation...")
+        # Validating DataFrame compatibility - no output needed
         existing_cols = set(existing_master_df.columns)
         new_cols = set(new_master_df_cleaned.columns)
         
@@ -1566,7 +1639,7 @@ def main():
     update_database_with_master_table(master_df, sample_metadata_df, individual_plates_df)
     
     # Step 8: Save final master DataFrame to CSV (for both first and subsequent runs)
-    output_filename = "master_dataframe_cleaned.csv"
+    output_filename = "library_dataframe.csv"
     master_df.to_csv(output_filename, index=False)
     print(f"✅ Saved final master DataFrame to '{output_filename}' ({len(master_df)} total wells)")
     
