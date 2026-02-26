@@ -781,12 +781,12 @@ def assign_fa_wells(selected_wells_df):
     return sorted_df
 
 
-def create_fa_transfer_files(all_plate_layouts_with_indexes, individual_plates_df):
+def create_fa_transfer_files(fa_well_assignments, individual_plates_df):
     """
-    Create FA transfer files for each plate.
+    Create FA transfer files for each plate using pre-computed FA well assignments.
     
     Args:
-        all_plate_layouts_with_indexes (dict): Dictionary of plate_name -> DataFrame with index columns
+        fa_well_assignments (dict): Dictionary of plate_name -> DataFrame with FA well assignments
         individual_plates_df (pd.DataFrame): Database plate information for barcode lookup
     """
     # Create output directory if it doesn't exist
@@ -794,8 +794,13 @@ def create_fa_transfer_files(all_plate_layouts_with_indexes, individual_plates_d
     output_dir.mkdir(exist_ok=True)
     print(f"✅ Created/verified output directory: {output_dir}")
     
-    for plate_name, plate_df in all_plate_layouts_with_indexes.items():
+    for plate_name, fa_wells_df in fa_well_assignments.items():
         print(f"\n🔄 Processing FA transfer for plate '{plate_name}'")
+        
+        # Skip plates with no FA well assignments
+        if fa_wells_df.empty:
+            print(f"⚠️  WARNING: No wells selected for FA transfer for plate '{plate_name}'")
+            continue
         
         # Get barcode for this plate from database
         plate_row = individual_plates_df[individual_plates_df['plate_name'] == plate_name]
@@ -804,15 +809,6 @@ def create_fa_transfer_files(all_plate_layouts_with_indexes, individual_plates_d
             continue
         
         barcode = plate_row['barcode'].iloc[0]
-        
-        # Step 1: Select wells for FA transfer
-        selected_wells = select_wells_for_fa_transfer(plate_df)
-        if selected_wells.empty:
-            print(f"⚠️  WARNING: No wells selected for FA transfer for plate '{plate_name}'")
-            continue
-        
-        # Step 2: Assign FA well positions
-        fa_wells_df = assign_fa_wells(selected_wells)
         
         # Step 3: Create output DataFrame with required columns
         output_rows = []
@@ -845,12 +841,13 @@ def create_fa_transfer_files(all_plate_layouts_with_indexes, individual_plates_d
     print(f"\n✅ Completed FA transfer file generation")
 
 
-def create_fa_input_files(all_plate_layouts_with_indexes, individual_plates_df):
+def create_fa_input_files(fa_well_assignments, individual_plates_df):
     """
-    Create FA input files for each plate with 3 columns: number (1-96), FA_well, barcode_well.
+    Create FA input files for each plate with 3 columns: number (1-96), FA_well, barcode_platename_well.
+    Uses pre-computed FA well assignments to avoid redundant processing.
     
     Args:
-        all_plate_layouts_with_indexes (dict): Dictionary of plate_name -> DataFrame with index columns
+        fa_well_assignments (dict): Dictionary of plate_name -> DataFrame with FA well assignments
         individual_plates_df (pd.DataFrame): Database plate information for barcode lookup
     """
     # Create output directory if it doesn't exist
@@ -858,8 +855,13 @@ def create_fa_input_files(all_plate_layouts_with_indexes, individual_plates_df):
     output_dir.mkdir(exist_ok=True)
     print(f"✅ Created/verified output directory: {output_dir}")
     
-    for plate_name, plate_df in all_plate_layouts_with_indexes.items():
+    for plate_name, fa_wells_df in fa_well_assignments.items():
         print(f"\n🔄 Processing FA input for plate '{plate_name}'")
+        
+        # Skip plates with no FA well assignments
+        if fa_wells_df.empty:
+            print(f"⚠️  WARNING: No wells selected for FA input for plate '{plate_name}'")
+            continue
         
         # Get barcode for this plate from database
         plate_row = individual_plates_df[individual_plates_df['plate_name'] == plate_name]
@@ -868,15 +870,6 @@ def create_fa_input_files(all_plate_layouts_with_indexes, individual_plates_df):
             continue
         
         barcode = plate_row['barcode'].iloc[0]
-        
-        # Step 1: Select wells for FA transfer (same as FA transfer files)
-        selected_wells = select_wells_for_fa_transfer(plate_df)
-        if selected_wells.empty:
-            print(f"⚠️  WARNING: No wells selected for FA input for plate '{plate_name}'")
-            continue
-        
-        # Step 2: Assign FA well positions (same as FA transfer files)
-        fa_wells_df = assign_fa_wells(selected_wells)
         
         # Step 3: Sort by FA well position column-wise (A1, B1, C1, ..., H1, A2, B2, ...)
         # Extract FA well row and column for sorting
@@ -963,12 +956,13 @@ def create_fa_input_files(all_plate_layouts_with_indexes, individual_plates_df):
     print(f"\n✅ Completed FA input file generation")
 
 
-def create_master_dataframe(all_plate_layouts_with_indexes, individual_plates_df):
+def create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments, individual_plates_df):
     """
-    Concatenate all plate DataFrames and merge with FA well information.
+    Concatenate all plate DataFrames and merge with pre-computed FA well information.
     
     Args:
         all_plate_layouts_with_indexes (dict): Dictionary of plate DataFrames with index assignments
+        fa_well_assignments (dict): Dictionary of plate_name -> DataFrame with FA well assignments
         individual_plates_df (pd.DataFrame): Individual plates metadata
         
     Returns:
@@ -989,14 +983,11 @@ def create_master_dataframe(all_plate_layouts_with_indexes, individual_plates_df
     master_df = pd.concat(all_plate_dfs, ignore_index=True)
     print(f"  Concatenated {len(all_plate_dfs)} plates into master DataFrame with {len(master_df)} total wells")
     
-    # Step 2: Create FA well assignments for all plates
+    # Step 2: Use pre-computed FA well assignments
     fa_assignments = []
     
-    for plate_name, plate_df in all_plate_layouts_with_indexes.items():
-        # Get FA well assignments for this plate
-        selected_wells = select_wells_for_fa_transfer(plate_df)
-        if len(selected_wells) > 0:
-            fa_wells_df = assign_fa_wells(selected_wells)
+    for plate_name, fa_wells_df in fa_well_assignments.items():
+        if len(fa_wells_df) > 0:
             # Keep only the columns needed for merging
             fa_merge_df = fa_wells_df[['Plate_ID', 'Well_Row', 'Well_Col', 'Well', 'FA_Well']].copy()
             fa_merge_df['Plate_Name'] = plate_name
@@ -1173,6 +1164,9 @@ def archive_database_file():
         
         shutil.move(str(db_path), str(archive_path))
         print(f"  Archived existing database: {archive_path}")
+        
+        # Also archive master CSV file if it exists
+        archive_master_csv_file()
     else:
         print("  No existing database file to archive")
 
@@ -1214,22 +1208,231 @@ def update_database_with_master_table(master_df, sample_metadata_df, individual_
         sys.exit(1)
 
 
+def detect_run_type():
+    """
+    Detect if this is a first run or subsequent run by checking for master_plate_data table.
+    
+    Returns:
+        tuple: (is_first_run, existing_master_df)
+               is_first_run: True if first run, False if subsequent run
+               existing_master_df: DataFrame of existing master data (None if first run)
+    """
+    db_path = Path("project_summary.db")
+    
+    # Check if database file exists
+    if not db_path.exists():
+        print("🔬 FIRST RUN DETECTED: No database file found")
+        return True, None
+    
+    try:
+        engine = create_engine(f'sqlite:///{db_path}')
+        
+        # Check if master_plate_data table exists
+        try:
+            existing_master_df = pd.read_sql('SELECT * FROM master_plate_data', engine)
+            engine.dispose()
+            print(f"🔄 SUBSEQUENT RUN DETECTED: Found existing master_plate_data table with {len(existing_master_df)} records")
+            return False, existing_master_df
+        except Exception:
+            # Table doesn't exist - first run
+            engine.dispose()
+            print("🔬 FIRST RUN DETECTED: Database exists but no master_plate_data table found")
+            return True, None
+            
+    except Exception as e:
+        print(f"FATAL ERROR: Could not access database {db_path}: {e}")
+        sys.exit()
+
+
+def validate_no_duplicate_plates(plate_list, existing_master_df):
+    """
+    Validate that none of the plates in the current list were previously processed.
+    
+    Args:
+        plate_list (list): List of plate names from library_sort_plates.txt
+        existing_master_df (pd.DataFrame): Existing master plate data
+        
+    Raises:
+        SystemExit: If any plates were previously processed
+    """
+    if existing_master_df is None or existing_master_df.empty:
+        return  # No existing data to check against
+    
+    # Get list of previously processed plates
+    if 'Plate_ID' in existing_master_df.columns:
+        previously_processed = set(existing_master_df['Plate_ID'].unique())
+    else:
+        print("⚠️  WARNING: No Plate_ID column found in existing master data")
+        return
+    
+    # Check for duplicates
+    duplicate_plates = []
+    for plate_name in plate_list:
+        if plate_name in previously_processed:
+            duplicate_plates.append(plate_name)
+    
+    if duplicate_plates:
+        print("FATAL ERROR: The following plates have already been processed and cannot be reprocessed:")
+        for plate in duplicate_plates:
+            print(f"  - {plate}")
+        print("Reprocessing existing plates is not allowed for data integrity.")
+        print("Remove these plates from library_sort_plates.txt or use different plate names.")
+        sys.exit()
+    
+    print(f"✅ Validated {len(plate_list)} new plates against {len(previously_processed)} previously processed plates")
+
+
+def archive_master_csv_file():
+    """
+    Archive existing master DataFrame CSV file with timestamp suffix.
+    """
+    csv_path = Path("master_dataframe_cleaned.csv")
+    
+    if csv_path.exists():
+        timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
+        archive_dir = Path("archived_files")
+        archive_dir.mkdir(exist_ok=True)
+        
+        # Create archive name with timestamp suffix
+        stem = csv_path.stem  # "master_dataframe_cleaned"
+        suffix = csv_path.suffix  # ".csv"
+        archive_name = f"{stem}_{timestamp}{suffix}"
+        archive_path = archive_dir / archive_name
+        
+        shutil.move(str(csv_path), str(archive_path))
+        print(f"  Archived existing master CSV: {archive_path}")
+    else:
+        print("  No existing master CSV file to archive")
+
+
+def create_processed_files_directories():
+    """
+    Create directory structure for organizing processed input files.
+    """
+    print("\n🔄 Creating processed files directory structure...")
+    
+    # Create main directory
+    processed_dir = Path("previously_processed_files")
+    processed_dir.mkdir(exist_ok=True)
+    
+    # Create subdirectories
+    layout_files_dir = processed_dir / "plate_layout_files"
+    layout_files_dir.mkdir(exist_ok=True)
+    
+    sorted_plates_dir = processed_dir / "list_of_sorted_plates"
+    sorted_plates_dir.mkdir(exist_ok=True)
+    
+    print(f"✅ Created directory structure:")
+    print(f"  - {processed_dir}")
+    print(f"  - {layout_files_dir}")
+    print(f"  - {sorted_plates_dir}")
+
+
+def move_processed_input_files(processed_plates):
+    """
+    Move processed input files to organized directory structure with timestamp suffixes.
+    
+    Args:
+        processed_plates (list): List of plate names that were processed
+    """
+    print("\n🔄 Moving processed input files...")
+    
+    timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
+    
+    # Move library_sort_plates.txt
+    library_file = Path("library_sort_plates.txt")
+    if library_file.exists():
+        dest_dir = Path("previously_processed_files/list_of_sorted_plates")
+        dest_file = dest_dir / f"library_sort_plates_{timestamp}.txt"
+        shutil.move(str(library_file), str(dest_file))
+        print(f"  Moved library_sort_plates.txt → {dest_file}")
+    
+    # Move layout CSV files for processed plates
+    layout_files_moved = 0
+    for plate_name in processed_plates:
+        csv_file = Path(f"{plate_name}.csv")
+        if csv_file.exists():
+            # Skip the standard template file
+            if csv_file.name == "standard_sort_layout.csv":
+                continue
+                
+            dest_dir = Path("previously_processed_files/plate_layout_files")
+            stem = csv_file.stem
+            suffix = csv_file.suffix
+            dest_file = dest_dir / f"{stem}_{timestamp}{suffix}"
+            shutil.move(str(csv_file), str(dest_file))
+            print(f"  Moved {csv_file.name} → {dest_file}")
+            layout_files_moved += 1
+    
+    print(f"✅ Moved {layout_files_moved + 1} input files to processed directories")
+
+
+def perform_fa_well_selection(all_plate_layouts_with_indexes, individual_plates_df):
+    """
+    Perform FA well selection once for all plates to avoid redundant processing.
+    
+    Args:
+        all_plate_layouts_with_indexes (dict): Dictionary of plate_name -> DataFrame with index columns
+        individual_plates_df (pd.DataFrame): Database plate information for barcode lookup
+        
+    Returns:
+        dict: Dictionary of plate_name -> DataFrame with FA well assignments
+    """
+    print("\n🔄 Performing FA well selection for all plates...")
+    
+    fa_well_assignments = {}
+    
+    for plate_name, plate_df in all_plate_layouts_with_indexes.items():
+        print(f"  Processing FA selection for plate '{plate_name}'")
+        
+        # Step 1: Select wells for FA transfer
+        selected_wells = select_wells_for_fa_transfer(plate_df)
+        if selected_wells.empty:
+            print(f"    ⚠️  No wells selected for FA transfer for plate '{plate_name}'")
+            fa_well_assignments[plate_name] = pd.DataFrame()  # Empty DataFrame
+            continue
+        
+        # Step 2: Assign FA well positions
+        fa_wells_df = assign_fa_wells(selected_wells)
+        
+        # Store the result
+        fa_well_assignments[plate_name] = fa_wells_df
+        print(f"    ✅ Selected {len(fa_wells_df)} wells for FA processing")
+    
+    total_selected = sum(len(df) for df in fa_well_assignments.values())
+    print(f"✅ Completed FA well selection: {total_selected} total wells selected across {len(fa_well_assignments)} plates")
+    
+    return fa_well_assignments
+
+
 def main():
     """
     Main function - entry point for our script.
+    Handles both first run and subsequent run logic.
     """
-    print("Starting new script...")
+    print("Starting script...")
     print("Using conda environment: sip-lims")
     
-    # Read database tables
-    sample_metadata_df, individual_plates_df = read_database_tables()
+    # Step 1: Detect run type and get existing data
+    is_first_run, existing_master_df = detect_run_type()
     
-    # Read library sort plates file
+    # Step 2: Read database tables and current plate list
+    sample_metadata_df, individual_plates_df = read_database_tables()
     plate_list = read_library_sort_plates()
     
-    # Validate that all plates exist in database
-    validate_plates_in_database(plate_list, individual_plates_df)
+    # Step 3: Validate plates based on run type
+    if is_first_run:
+        # First run: validate all plates exist in database
+        validate_plates_in_database(plate_list, individual_plates_df)
+    else:
+        # Subsequent run: validate plates exist AND check for duplicates
+        validate_plates_in_database(plate_list, individual_plates_df)
+        validate_no_duplicate_plates(plate_list, existing_master_df)
     
+    # Step 4: Create directory structure for processed files
+    create_processed_files_directories()
+    
+    # Step 5: Process plates (same logic for both first and subsequent runs)
     # Separate custom and standard plates
     custom_plates, standard_plates = separate_custom_and_standard_plates(plate_list, individual_plates_df)
     
@@ -1249,20 +1452,126 @@ def main():
     # Create Illumina index transfer files
     create_illumina_index_files(all_plate_layouts_with_indexes, individual_plates_df)
     
-    # Create FA transfer files
-    create_fa_transfer_files(all_plate_layouts_with_indexes, individual_plates_df)
+    # Perform FA well selection once for all plates
+    fa_well_assignments = perform_fa_well_selection(all_plate_layouts_with_indexes, individual_plates_df)
     
-    # Create FA input files
-    create_fa_input_files(all_plate_layouts_with_indexes, individual_plates_df)
+    # Create FA transfer files using pre-computed FA selections
+    create_fa_transfer_files(fa_well_assignments, individual_plates_df)
     
-    # Create master DataFrame with all wells and FA assignments
-    master_df = create_master_dataframe(all_plate_layouts_with_indexes, individual_plates_df)
+    # Create FA input files using pre-computed FA selections
+    create_fa_input_files(fa_well_assignments, individual_plates_df)
     
-    # Archive existing database file
+    # Step 6: Handle master DataFrame based on run type
+    if is_first_run:
+        # First run: create new master DataFrame
+        master_df = create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments, individual_plates_df)
+    else:
+        # Subsequent run: create new data, clean it, then append to existing
+        print(f"\n🔄 Processing new plates for subsequent run...")
+        
+        # Create new master DataFrame (this will be uncleaned with all columns)
+        new_master_df_raw = create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments, individual_plates_df)
+        
+        # Clean the new DataFrame using the same logic as the existing one
+        print(f"🔄 Cleaning new master DataFrame to match existing structure...")
+        new_master_df_cleaned = new_master_df_raw.copy()
+        
+        # Remove the same columns that were removed from existing DataFrame
+        columns_to_remove = ['Well_Row', 'Well_Col', 'Plate_Name']
+        for col in columns_to_remove:
+            if col in new_master_df_cleaned.columns:
+                new_master_df_cleaned = new_master_df_cleaned.drop(col, axis=1)
+                print(f"  Removed column: {col}")
+        
+        # Clear index values for unused/ladder wells (same as existing)
+        index_columns = ['Index_Set', 'Index_Well', 'Index_Name']
+        unused_ladder_mask = new_master_df_cleaned['Type'].isin(['unused', 'ladder'])
+        
+        for col in index_columns:
+            if col in new_master_df_cleaned.columns:
+                new_master_df_cleaned.loc[unused_ladder_mask, col] = pd.NA
+        
+        unused_count = unused_ladder_mask.sum()
+        print(f"  Cleared index values for {unused_count} unused/ladder wells")
+        
+        # Reorder columns to match existing DataFrame structure
+        if 'Plate_Barcode' in new_master_df_cleaned.columns and 'FA_Well' in new_master_df_cleaned.columns:
+            cols = list(new_master_df_cleaned.columns)
+            cols.remove('Plate_Barcode')
+            if 'FA_Well' in cols:
+                cols.remove('FA_Well')
+            
+            # Find position after Index_Name
+            insert_pos = len(cols)
+            for i, col in enumerate(cols):
+                if col == 'Index_Name':
+                    insert_pos = i + 1
+                    break
+                elif col in ['Index_Set', 'Index_Well'] and insert_pos == len(cols):
+                    insert_pos = i + 1
+            
+            cols.insert(insert_pos, 'Plate_Barcode')
+            if 'FA_Well' in new_master_df_cleaned.columns:
+                cols.append('FA_Well')
+            
+            new_master_df_cleaned = new_master_df_cleaned[cols]
+            print(f"  Reordered columns to match existing structure")
+        
+        # Validate that DataFrames can be concatenated
+        print(f"\n🔄 Validating DataFrame compatibility for concatenation...")
+        existing_cols = set(existing_master_df.columns)
+        new_cols = set(new_master_df_cleaned.columns)
+        
+        if existing_cols != new_cols:
+            missing_in_existing = new_cols - existing_cols
+            missing_in_new = existing_cols - new_cols
+            
+            print(f"FATAL ERROR: DataFrame column structures do not match for concatenation")
+            print(f"Existing DataFrame columns: {sorted(existing_cols)}")
+            print(f"New DataFrame columns: {sorted(new_cols)}")
+            if missing_in_existing:
+                print(f"Missing in existing: {sorted(missing_in_existing)}")
+            if missing_in_new:
+                print(f"Missing in new: {sorted(missing_in_new)}")
+            print("Cannot safely append new data to existing master DataFrame.")
+            sys.exit()
+        
+        # Verify column order matches
+        if list(existing_master_df.columns) != list(new_master_df_cleaned.columns):
+            print(f"FATAL ERROR: DataFrame column order does not match")
+            print(f"Existing order: {list(existing_master_df.columns)}")
+            print(f"New order: {list(new_master_df_cleaned.columns)}")
+            print("Cannot safely append new data to existing master DataFrame.")
+            sys.exit()
+        
+        print(f"✅ DataFrame structures validated - safe to concatenate")
+        print(f"  Columns match: {len(existing_cols)} columns in both DataFrames")
+        
+        # Safely append new data to existing master DataFrame
+        try:
+            master_df = pd.concat([existing_master_df, new_master_df_cleaned], ignore_index=True)
+            print(f"✅ Successfully appended new data:")
+            print(f"  Existing: {len(existing_master_df)} wells")
+            print(f"  New: {len(new_master_df_cleaned)} wells")
+            print(f"  Combined: {len(master_df)} wells")
+        except Exception as e:
+            print(f"FATAL ERROR: Failed to concatenate DataFrames: {e}")
+            print("Cannot safely append new data to existing master DataFrame.")
+            sys.exit()
+        
+        # Note: CSV will be saved after database operations for consistency
+    
+    # Step 7: Archive existing files and update database
     archive_database_file()
-    
-    # Create updated database with master DataFrame table
     update_database_with_master_table(master_df, sample_metadata_df, individual_plates_df)
+    
+    # Step 8: Save final master DataFrame to CSV (for both first and subsequent runs)
+    output_filename = "master_dataframe_cleaned.csv"
+    master_df.to_csv(output_filename, index=False)
+    print(f"✅ Saved final master DataFrame to '{output_filename}' ({len(master_df)} total wells)")
+    
+    # Step 9: Move processed input files to organized directories
+    move_processed_input_files(plate_list)
     
     print("Script completed successfully!")
 
