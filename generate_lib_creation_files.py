@@ -102,7 +102,7 @@ def read_database_tables():
         # Read sample_metadata table
         try:
             sample_metadata_df = pd.read_sql('SELECT * FROM sample_metadata', engine)
-            print(f"✅ Read {len(sample_metadata_df)} records from sample_metadata table")
+            # Database read successful - no output needed
         except Exception as e:
             print(f"FATAL ERROR: Could not read 'sample_metadata' table: {e}")
             print("Database must contain 'sample_metadata' table.")
@@ -112,7 +112,7 @@ def read_database_tables():
         # Read individual_plates table
         try:
             individual_plates_df = pd.read_sql('SELECT * FROM individual_plates', engine)
-            print(f"✅ Read {len(individual_plates_df)} records from individual_plates table")
+            # Database read successful - no output needed
         except Exception as e:
             print(f"FATAL ERROR: Could not read 'individual_plates' table: {e}")
             print("Database must contain 'individual_plates' table.")
@@ -218,7 +218,7 @@ def validate_plates_in_database(plate_list, individual_plates_df):
         print("All plates in the list must exist in the individual_plates table.")
         sys.exit()
     
-    print(f"✅ All {len(plate_list)} plates validated against database")
+    # Plate validation successful - no output needed
 
 
 def separate_custom_and_standard_plates(plate_list, individual_plates_df):
@@ -422,7 +422,7 @@ def load_standard_template():
             print(f"Required headers: {expected_layout_headers}")
             sys.exit()
         
-        print(f"✅ Loaded standard template with {len(template_df)} wells")
+        # Template loaded successfully - no output needed
         return template_df
         
     except Exception as e:
@@ -463,6 +463,8 @@ def apply_template_to_plates(plates_needing_template, template_df, individual_pl
         
         # Fill in the Sample column with actual sample name for sample wells
         # (Keep other well types like pos_cntrl, neg_cntrl, unused, ladder as they are)
+        # Convert Sample column to object dtype to avoid FutureWarning when assigning strings
+        plate_layout['Sample'] = plate_layout['Sample'].astype('object')
         sample_mask = plate_layout['Type'] == 'sample'
         plate_layout.loc[sample_mask, 'Sample'] = sample
         
@@ -641,7 +643,7 @@ def create_illumina_index_files(all_plate_layouts_with_indexes, individual_plate
     # Create output directory if it doesn't exist
     output_dir = Path("2_library_creation/Illumina_index_transfer_files")
     output_dir.mkdir(exist_ok=True)
-    print(f"✅ Created/verified output directory: {output_dir}")
+    # Output directory created - no output needed
     for plate_name, plate_df in all_plate_layouts_with_indexes.items():
         # Get barcode for this plate from database
         plate_row = individual_plates_df[individual_plates_df['plate_name'] == plate_name]
@@ -662,9 +664,10 @@ def create_illumina_index_files(all_plate_layouts_with_indexes, individual_plate
             
             if len(non_excluded_wells) > 0:
                 included_index_sets.append(index_set)
-                print(f"  Including {index_set}: {len(non_excluded_wells)} active wells out of {len(index_wells)} total")
+                # Index set included - no detailed output needed
             else:
-                print(f"  Excluding {index_set}: all {len(index_wells)} wells are unused/ladder")
+                # Index set excluded - no detailed output needed
+                pass
         
         if not included_index_sets:
             print(f"⚠️  WARNING: No index sets to include for plate '{plate_name}' - all wells are unused/ladder")
@@ -742,9 +745,7 @@ def select_wells_for_fa_transfer(plate_df):
         print(f"⚠️  WARNING: No valid columns found for FA transfer")
         return pd.DataFrame()
     
-    print(f"  Valid columns for FA transfer: {valid_columns}")
-    if ladder_only_columns:
-        print(f"  Ladder-only columns (excluded): {ladder_only_columns}")
+    # Valid columns identified - no detailed output needed
     
     # Step 2: Get wells from valid columns only
     valid_wells = plate_df[plate_df['Well_Col'].isin(valid_columns)].copy()
@@ -766,7 +767,7 @@ def select_wells_for_fa_transfer(plate_df):
     
     if total_valid_wells <= wells_to_select:
         selected_wells = valid_wells
-        print(f"  Selected all {total_valid_wells} wells from valid columns")
+        # Selected all wells - no detailed output needed
     else:
         # Need to select first 48 + last (wells_to_select - 48)
         first_48 = valid_wells.head(48)
@@ -778,18 +779,18 @@ def select_wells_for_fa_transfer(plate_df):
                 last_n = valid_wells.iloc[-(last_n_count+1):-1]
             else:
                 last_n = pd.DataFrame()
-            print(f"  Selected {wells_to_select} wells (first 48 + last {last_n_count}, skipping very last well for ladder) from {total_valid_wells} total wells")
+            # Wells selected with ladder accommodation - no detailed output needed
         else:
             # Normal selection - no excluded ladders
             last_n = valid_wells.tail(last_n_count)
-            print(f"  Selected {wells_to_select} wells (first 48 + last {last_n_count}) from {total_valid_wells} total wells")
+            # Wells selected normally - no detailed output needed
         
         selected_wells = pd.concat([first_48, last_n])
     
     # Step 6: Add excluded ladder wells
     if len(excluded_ladder_wells) > 0:
         selected_wells = pd.concat([selected_wells, excluded_ladder_wells])
-        print(f"  Added {len(excluded_ladder_wells)} ladder well(s) from excluded columns")
+        # Ladder wells added - no detailed output needed
     
     return selected_wells.drop('sequential_number', axis=1, errors='ignore')
 
@@ -822,7 +823,7 @@ def assign_fa_wells(selected_wells_df):
     if len(ladder_wells) > 0:
         # Assign all ladder wells to H12 (if multiple ladders, they'll overwrite - last one wins)
         sorted_df.loc[sorted_df['Type'] == 'ladder', 'FA_Well'] = 'H12'
-        print(f"  Assigned {len(ladder_wells)} ladder well(s) to FA well H12")
+        # Ladder wells assigned - no detailed output needed
     
     # Assign FA wells to non-ladder wells
     non_ladder_wells = sorted_df[sorted_df['Type'] != 'ladder']
@@ -841,7 +842,7 @@ def assign_fa_wells(selected_wells_df):
         if fa_index >= len(fa_wells):
             break
     
-    print(f"  Assigned FA wells to {len(sorted_df)} selected wells")
+    # FA wells assigned - no detailed output needed
     return sorted_df
 
 
@@ -900,9 +901,9 @@ def create_fa_transfer_files(fa_well_assignments, individual_plates_df):
             
             # Export to CSV
             output_df.to_csv(csv_filename, index=False)
-            print(f"✅ Created FA transfer file '{csv_filename}' with {len(output_df)} wells")
+            # FA transfer file created - no detailed output needed
     
-    print(f"\n✅ Completed FA transfer file generation")
+    print(f"✅ Completed FA transfer file generation")
 
 
 def create_fa_input_files(fa_well_assignments, individual_plates_df):
@@ -917,7 +918,7 @@ def create_fa_input_files(fa_well_assignments, individual_plates_df):
     # Create output directory if it doesn't exist
     output_dir = Path("2_library_creation/FA_input_files")
     output_dir.mkdir(exist_ok=True)
-    print(f"✅ Created/verified output directory: {output_dir}")
+    # Output directory created - no output needed
     
     for plate_name, fa_wells_df in fa_well_assignments.items():
         # Processing FA input - no detailed output needed
@@ -1000,7 +1001,7 @@ def create_fa_input_files(fa_well_assignments, individual_plates_df):
                         used_fa_wells.add(fa_well)
                         break
             
-            print(f"  Added {96 - num_actual_wells} empty wells to reach 96 total")
+            # Empty wells added - no detailed output needed
         
         # Step 5: Create output file (no headers)
         if output_rows:
@@ -1015,9 +1016,9 @@ def create_fa_input_files(fa_well_assignments, individual_plates_df):
                 writer = csv.writer(f)
                 writer.writerows(output_rows)
             
-            print(f"✅ Created FA input file '{csv_filename}' with {len(output_rows)} wells")
+            # FA input file created - no detailed output needed
     
-    print(f"\n✅ Completed FA input file generation")
+    print(f"✅ Completed FA input file generation")
 
 
 def create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments, individual_plates_df):
@@ -1045,7 +1046,7 @@ def create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments,
     
     # Concatenate all plates vertically
     master_df = pd.concat(all_plate_dfs, ignore_index=True)
-    print(f"  Concatenated {len(all_plate_dfs)} plates into master DataFrame with {len(master_df)} total wells")
+    # Master DataFrame created - no detailed output needed
     
     # Step 2: Use pre-computed FA well assignments
     fa_assignments = []
@@ -1060,7 +1061,7 @@ def create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments,
     # Step 3: Merge FA well assignments with master DataFrame
     if fa_assignments:
         fa_master_df = pd.concat(fa_assignments, ignore_index=True)
-        print(f"  Created FA assignments for {len(fa_assignments)} plates with {len(fa_master_df)} selected wells")
+        # FA assignments created - no detailed output needed
         
         # Merge on plate name and well identifiers
         merge_columns = ['Plate_Name', 'Well_Row', 'Well_Col', 'Well']
@@ -1098,16 +1099,13 @@ def create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments,
             print(duplicates)
             sys.exit(1)
         
-        print(f"✅ Successfully merged FA well assignments")
-        print(f"  Total wells: {len(final_df)}")
-        print(f"  Wells with FA assignments: {final_df['FA_Well'].notna().sum()}")
-        print(f"  Wells without FA assignments: {final_df['FA_Well'].isna().sum()}")
+        # FA well assignments merged successfully - no detailed output needed
         
         # Prepare DataFrame for sorting and cleaning
         df_to_process = final_df.copy()
         
     else:
-        print("⚠️  No FA assignments found - returning master DataFrame without FA wells")
+        # No FA assignments found - no detailed output needed
         master_df['FA_Well'] = pd.NA
         
         # Prepare DataFrame for sorting and cleaning
@@ -1130,7 +1128,7 @@ def create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments,
         plate_mask = df_to_process['Plate_Name'] == plate_name
         df_to_process.loc[plate_mask, 'Plate_Barcode'] = barcode
     
-    print(f"  Added plate barcodes for {len(df_to_process['Plate_Name'].unique())} plates")
+    # Plate barcodes added - no detailed output needed
     
     # Sort by barcode (numerically by number after dot), then well column, then well row
     # Extract numeric part from barcode for proper numerical sorting
@@ -1143,7 +1141,7 @@ def create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments,
     # Remove temporary sorting columns
     df_to_process = df_to_process.drop(['barcode_base', 'barcode_number'], axis=1)
     
-    print(f"  Sorted DataFrame by barcode (numerically), well column, then well row")
+    # DataFrame sorted - no detailed output needed
     
     # Step 5: Clean up the master DataFrame
     # Cleaning DataFrame - no output needed
@@ -1154,7 +1152,7 @@ def create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments,
     for col in columns_to_remove:
         if col in cleaned_df.columns:
             cleaned_df = cleaned_df.drop(col, axis=1)
-            print(f"  Removed column: {col}")
+            # Column removed - no detailed output needed
     
     # Clear index values for unused/ladder wells
     index_columns = ['Index_Set', 'Index_Well', 'Index_Name']
@@ -1165,7 +1163,7 @@ def create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments,
             cleaned_df.loc[unused_ladder_mask, col] = pd.NA
     
     unused_count = unused_ladder_mask.sum()
-    print(f"  Cleared index values for {unused_count} unused/ladder wells")
+    # Index values cleared - no detailed output needed
     
     # Reorder columns to put Plate_Barcode after index info and before FA_Well
     if 'Plate_Barcode' in cleaned_df.columns and 'FA_Well' in cleaned_df.columns:
@@ -1195,12 +1193,12 @@ def create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments,
         
         # Reorder the DataFrame
         cleaned_df = cleaned_df[cols]
-        print(f"  Reordered columns: Plate_Barcode positioned after index columns")
+        # Columns reordered - no detailed output needed
     
     # Save cleaned master DataFrame to CSV for inspection
     output_filename = "library_dataframe.csv"
     cleaned_df.to_csv(output_filename, index=False)
-    print(f"  Saved cleaned master DataFrame to '{output_filename}' for inspection")
+    # Master DataFrame saved - no detailed output needed
     
     return cleaned_df
 
@@ -1227,12 +1225,13 @@ def archive_database_file():
         archive_path = archive_dir / archive_name
         
         shutil.move(str(db_path), str(archive_path))
-        print(f"  Archived existing database: {archive_path}")
+        # Database archived - no detailed output needed
         
         # Also archive master CSV file if it exists
         archive_master_csv_file()
     else:
-        print("  No existing database file to archive")
+        # No database to archive - no output needed
+        pass
 
 
 def update_database_with_master_table(master_df, sample_metadata_df, individual_plates_df):
@@ -1434,10 +1433,10 @@ def move_processed_input_files(processed_plates):
             dest_dir = Path("2_library_creation/previously_processed_files/plate_layout_files")
             dest_file = dest_dir / csv_file.name
             shutil.move(str(csv_file), str(dest_file))
-            print(f"  Moved {csv_file.name} → {dest_file}")
+            # File moved - no detailed output needed
             layout_files_moved += 1
     
-    print(f"✅ Moved {layout_files_moved + 1} input files to processed directories")
+    # Input files moved - no detailed output needed
 
 
 def perform_fa_well_selection(all_plate_layouts_with_indexes, individual_plates_df):
@@ -1456,12 +1455,12 @@ def perform_fa_well_selection(all_plate_layouts_with_indexes, individual_plates_
     fa_well_assignments = {}
     
     for plate_name, plate_df in all_plate_layouts_with_indexes.items():
-        print(f"  Processing FA selection for plate '{plate_name}'")
+        # Processing FA selection - no detailed output needed
         
         # Step 1: Select wells for FA transfer
         selected_wells = select_wells_for_fa_transfer(plate_df)
         if selected_wells.empty:
-            print(f"    ⚠️  No wells selected for FA transfer for plate '{plate_name}'")
+            # No wells selected - no detailed output needed
             fa_well_assignments[plate_name] = pd.DataFrame()  # Empty DataFrame
             continue
         
@@ -1470,7 +1469,7 @@ def perform_fa_well_selection(all_plate_layouts_with_indexes, individual_plates_
         
         # Store the result
         fa_well_assignments[plate_name] = fa_wells_df
-        print(f"    ✅ Selected {len(fa_wells_df)} wells for FA processing")
+        # Wells selected for FA processing - no detailed output needed
     
     total_selected = sum(len(df) for df in fa_well_assignments.values())
     print(f"✅ Completed FA well selection: {total_selected} total wells selected across {len(fa_well_assignments)} plates")
@@ -1483,8 +1482,7 @@ def main():
     Main function - entry point for our script.
     Handles both first run and subsequent run logic.
     """
-    print("Starting script...")
-    print("Using conda environment: sip-lims")
+    # Script starting - no detailed output needed
     
     # Step 1: Detect run type and get existing data
     is_first_run, existing_master_df = detect_run_type()
@@ -1641,12 +1639,12 @@ def main():
     # Step 8: Save final master DataFrame to CSV (for both first and subsequent runs)
     output_filename = "library_dataframe.csv"
     master_df.to_csv(output_filename, index=False)
-    print(f"✅ Saved final master DataFrame to '{output_filename}' ({len(master_df)} total wells)")
+    # Final master DataFrame saved - no detailed output needed
     
     # Step 9: Move processed input files to organized directories
     move_processed_input_files(plate_list)
     
-    print("Script completed successfully!")
+    # Script completed - no output needed
 
 
 if __name__ == "__main__":
