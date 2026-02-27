@@ -19,7 +19,7 @@ Features:
 - Automatic detection of sample metadata CSV files (sample_metadtata.csv)
 - File-based input for custom plates (custom_plate_names.txt)
 - File-based input for additional standard plates (additional_standard_plates.txt)
-- Simplified incremental barcode generation (e.g., ABC12.1, ABC12.2, ABC12.3)
+- Simplified incremental barcode generation (e.g., ABC12-1, ABC12-2, ABC12-3)
 - Two-table database architecture for better data organization
 - Consolidated folder management with automatic creation of workflow structure
 - Timestamped file movement to prevent overwrites on subsequent runs
@@ -41,9 +41,9 @@ File Organization:
 
 Barcode System:
 - Single base barcode per project (5-character alphanumeric)
-- Incremental numbering: BASE.1, BASE.2, BASE.3, etc.
-- Echo variants: eBASE.1, eBASE.2 (lowercase 'e' prefix)
-- Hamilton variants: hBASE.1, hBASE.2 (lowercase 'h' prefix)
+- Incremental numbering: BASE-1, BASE-2, BASE-3, etc.
+- Echo variants: eBASE-1, eBASE-2 (lowercase 'e' prefix)
+- Hamilton variants: hBASE-1, hBASE-2 (lowercase 'h' prefix)
 - No collision avoidance needed - simple sequential numbering
 
 Safety Features:
@@ -176,16 +176,16 @@ def generate_simple_barcodes(plates_df, existing_individual_plates_df=None):
         if existing_individual_plates_df is not None and len(existing_individual_plates_df) > 0:
             # Extract existing base barcode from first existing barcode
             first_barcode = existing_individual_plates_df['barcode'].iloc[0]
-            if '.' in str(first_barcode):
-                base_barcode = str(first_barcode).split('.')[0]
+            if '-' in str(first_barcode):
+                base_barcode = str(first_barcode).split('-')[0]
                 # Reuse existing base barcode
             
             # Find the highest existing barcode number to continue from
             existing_numbers = []
             for barcode in existing_individual_plates_df['barcode']:
-                if '.' in str(barcode):
+                if '-' in str(barcode):
                     try:
-                        number = int(str(barcode).split('.')[-1])
+                        number = int(str(barcode).split('-')[-1])
                         existing_numbers.append(number)
                     except ValueError:
                         continue
@@ -205,12 +205,12 @@ def generate_simple_barcodes(plates_df, existing_individual_plates_df=None):
         # Assign incremental barcodes to all plates
         for i, idx in enumerate(plates_df.index):
             barcode_number = start_number + i
-            full_barcode = f"{base_barcode}.{barcode_number}"
+            full_barcode = f"{base_barcode}-{barcode_number}"
             
             plates_df.at[idx, 'barcode'] = full_barcode
             plates_df.at[idx, 'created_timestamp'] = datetime.now().isoformat()
         
-        print(f"✅ Generated {len(plates_df)} barcodes: {base_barcode}.{start_number} to {base_barcode}.{start_number + len(plates_df) - 1}")
+        print(f"✅ Generated {len(plates_df)} barcodes: {base_barcode}-{start_number} to {base_barcode}-{start_number + len(plates_df) - 1}")
         
         return plates_df
         
@@ -375,9 +375,9 @@ def make_bartender_file(df, output_path):
             f.write(BARTENDER_HEADER)
             
             # Sort by barcode number in reverse order (highest first)
-            # Extract number from barcode (e.g., "W91ZL.15" -> 15)
+            # Extract number from barcode (e.g., "W91ZL-15" -> 15)
             df_sorted = df.copy()
-            df_sorted['barcode_num'] = df_sorted['barcode'].str.split('.').str[1].astype(int)
+            df_sorted['barcode_num'] = df_sorted['barcode'].str.split('-').str[1].astype(int)
             df_sorted = df_sorted.sort_values('barcode_num', ascending=False)
             
             # Interleaved echo/hamilton pairs in reverse order with separators
