@@ -1130,10 +1130,10 @@ def create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments,
     
     # Plate barcodes added - no detailed output needed
     
-    # Sort by barcode (numerically by number after dot), then well column, then well row
+    # Sort by barcode (numerically by number after hyphen), then well column, then well row
     # Extract numeric part from barcode for proper numerical sorting
-    df_to_process['barcode_base'] = df_to_process['Plate_Barcode'].str.split('.').str[0]
-    df_to_process['barcode_number'] = df_to_process['Plate_Barcode'].str.split('.').str[1].astype(int)
+    df_to_process['barcode_base'] = df_to_process['Plate_Barcode'].str.split('-').str[0]
+    df_to_process['barcode_number'] = df_to_process['Plate_Barcode'].str.split('-').str[1].astype(int)
     
     # Sort by base barcode, then numeric part, then well column, then well row
     df_to_process = df_to_process.sort_values(['barcode_base', 'barcode_number', 'Well_Col', 'Well_Row'])
