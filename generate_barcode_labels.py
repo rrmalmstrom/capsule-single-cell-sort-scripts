@@ -912,15 +912,18 @@ def manage_bartender_file(bartender_file_path, folders):
     # BarTender file organized
 
 
-def manage_input_files(folders, is_first_run=True):
+def manage_input_files(folders, is_first_run=True, custom_plates_processed=False, additional_plates_processed=False):
     """
     Move processed input files to organized folder structure with timestamps.
     Uses the new consolidated folder structure and adds timestamps to prevent overwrites.
+    Only moves files that were actually processed during this run.
     
     Args:
         folders (dict): Dictionary with folder paths from create_project_folder_structure()
         is_first_run (bool): True for first runs (look in working directory),
                             False for subsequent runs (look in 1_make_barcode_labels folder)
+        custom_plates_processed (bool): True if custom plates were processed this run
+        additional_plates_processed (bool): True if additional standard plates were processed this run
     """
     moved_files = []
     timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
@@ -933,31 +936,33 @@ def manage_input_files(folders, is_first_run=True):
         # Subsequent run: look in 1_make_barcode_labels folder
         search_dir = Path('1_make_barcode_labels')
     
-    # Move custom plate files with timestamp
-    custom_files = list(search_dir.glob('custom_plate_names.txt')) + list(search_dir.glob('custom_sort_plate_names.txt'))
-    for custom_file in custom_files:
-        if custom_file.exists():
-            # Add timestamp to filename: custom_plate_names.txt -> custom_plate_names_2026_02_26-Time14-30-25.txt
-            stem = custom_file.stem
-            suffix = custom_file.suffix
-            timestamped_name = f"{stem}_{timestamp}{suffix}"
-            destination = folders['custom_plates'] / timestamped_name
-            shutil.move(str(custom_file), str(destination))
-            moved_files.append(str(destination))
-            print(f"📁 Moved: {custom_file} → {destination}")
+    # Move custom plate files with timestamp (only if they were processed)
+    if custom_plates_processed:
+        custom_files = list(search_dir.glob('custom_plate_names.txt')) + list(search_dir.glob('custom_sort_plate_names.txt'))
+        for custom_file in custom_files:
+            if custom_file.exists():
+                # Add timestamp to filename: custom_plate_names.txt -> custom_plate_names_2026_02_26-Time14-30-25.txt
+                stem = custom_file.stem
+                suffix = custom_file.suffix
+                timestamped_name = f"{stem}_{timestamp}{suffix}"
+                destination = folders['custom_plates'] / timestamped_name
+                shutil.move(str(custom_file), str(destination))
+                moved_files.append(str(destination))
+                print(f"📁 Moved: {custom_file} → {destination}")
     
-    # Move additional standard plate files with timestamp
-    standard_files = list(search_dir.glob('additional_standard_plates.txt')) + list(search_dir.glob('additional_sort_plates.txt'))
-    for standard_file in standard_files:
-        if standard_file.exists():
-            # Add timestamp to filename: additional_standard_plates.txt -> additional_standard_plates_2026_02_26-Time14-30-25.txt
-            stem = standard_file.stem
-            suffix = standard_file.suffix
-            timestamped_name = f"{stem}_{timestamp}{suffix}"
-            destination = folders['standard_plates'] / timestamped_name
-            shutil.move(str(standard_file), str(destination))
-            moved_files.append(str(destination))
-            print(f"📁 Moved: {standard_file} → {destination}")
+    # Move additional standard plate files with timestamp (only if they were processed)
+    if additional_plates_processed:
+        standard_files = list(search_dir.glob('additional_standard_plates.txt')) + list(search_dir.glob('additional_sort_plates.txt'))
+        for standard_file in standard_files:
+            if standard_file.exists():
+                # Add timestamp to filename: additional_standard_plates.txt -> additional_standard_plates_2026_02_26-Time14-30-25.txt
+                stem = standard_file.stem
+                suffix = standard_file.suffix
+                timestamped_name = f"{stem}_{timestamp}{suffix}"
+                destination = folders['standard_plates'] / timestamped_name
+                shutil.move(str(standard_file), str(destination))
+                moved_files.append(str(destination))
+                print(f"📁 Moved: {standard_file} → {destination}")
     
     if moved_files:
         print(f"✅ Organized {len(moved_files)} input files with timestamps")
@@ -1062,7 +1067,8 @@ def process_first_run():
     Handle first run: CSV detection, plate generation, custom plates.
     
     Returns:
-        tuple: (sample_df, plates_df) - Sample metadata and plates DataFrames
+        tuple: (sample_df, plates_df, custom_plates_processed, additional_plates_processed) -
+               Sample metadata, plates DataFrames, and processing flags
     """
     print("\n🔬 FIRST RUN DETECTED")
     print("Processing sample metadata CSV file...")
@@ -1071,6 +1077,10 @@ def process_first_run():
     csv_file = detect_sample_metadata_csv()
     sample_df = read_sample_csv(csv_file)
     plates_df = make_plate_names(sample_df)
+    
+    # Track what was processed
+    custom_plates_processed = False
+    additional_plates_processed = False  # Never processed on first run
     
     # Add custom plates if requested (first run)
     custom_plates = get_custom_plates(is_first_run=True)
@@ -1082,8 +1092,9 @@ def process_first_run():
         ])
         plates_df = pd.concat([plates_df, custom_df], ignore_index=True)
         print(f"✅ Added {len(custom_plates)} custom plates")
+        custom_plates_processed = True
     
-    return sample_df, plates_df
+    return sample_df, plates_df, custom_plates_processed, additional_plates_processed
 
 
 def process_additional_standard_plates(existing_sample_df, additional_plates, existing_plates_df):
@@ -1159,10 +1170,15 @@ def process_subsequent_run(existing_sample_df, existing_plates_df):
         existing_plates_df (pd.DataFrame): Existing plates data
         
     Returns:
-        tuple: (sample_df, plates_df) - Sample metadata and new plates DataFrames
+        tuple: (sample_df, plates_df, custom_plates_processed, additional_plates_processed) -
+               Sample metadata, new plates DataFrames, and processing flags
     """
     print(f"\n🔄 SUBSEQUENT RUN DETECTED")
     print(f"Found existing database with {len(existing_sample_df)} samples and {len(existing_plates_df)} plates")
+    
+    # Track what was processed
+    custom_plates_processed = False
+    additional_plates_processed = False
     
     # Ask for additional standard plates (only on subsequent runs)
     additional_plates = get_additional_standard_plates(is_first_run=False)
@@ -1172,7 +1188,7 @@ def process_subsequent_run(existing_sample_df, existing_plates_df):
     
     # Check if user wants to add any plates
     if not additional_plates and not custom_plates:
-        return existing_sample_df, pd.DataFrame()
+        return existing_sample_df, pd.DataFrame(), custom_plates_processed, additional_plates_processed
     
     # Process additional standard plates
     plates_df = pd.DataFrame()
@@ -1181,6 +1197,7 @@ def process_subsequent_run(existing_sample_df, existing_plates_df):
     if additional_plates:
         additional_df = process_additional_standard_plates(existing_sample_df, additional_plates, existing_plates_df)
         plates_df = additional_df
+        additional_plates_processed = True
     
     # Process custom plates
     if custom_plates:
@@ -1194,11 +1211,12 @@ def process_subsequent_run(existing_sample_df, existing_plates_df):
         else:
             plates_df = pd.concat([plates_df, custom_df], ignore_index=True)
         print(f"✅ Added {len(custom_plates)} custom plates")
+        custom_plates_processed = True
     
     if not plates_df.empty:
         print(f"✅ Prepared {len(plates_df)} new plates for processing")
     
-    return sample_df, plates_df
+    return sample_df, plates_df, custom_plates_processed, additional_plates_processed
 
 
 def process_barcodes(plates_df, existing_plates_df):
@@ -1238,7 +1256,7 @@ def process_barcodes(plates_df, existing_plates_df):
     return plates_df, final_plates_df
 
 
-def finalize_files_and_database(sample_df, final_plates_df, new_plates_df, folders, is_first_run=True):
+def finalize_files_and_database(sample_df, final_plates_df, new_plates_df, folders, is_first_run=True, custom_plates_processed=False, additional_plates_processed=False):
     """
     Handle all file operations: archiving, saving, organizing.
     
@@ -1248,6 +1266,8 @@ def finalize_files_and_database(sample_df, final_plates_df, new_plates_df, folde
         new_plates_df (pd.DataFrame): New plates added this run
         folders (dict): Dictionary with folder paths from create_project_folder_structure()
         is_first_run (bool): True for first runs, False for subsequent runs
+        custom_plates_processed (bool): True if custom plates were processed this run
+        additional_plates_processed (bool): True if additional standard plates were processed this run
     """
     # Archive existing database file
     archive_database_file(DATABASE_NAME, folders)
@@ -1269,7 +1289,7 @@ def finalize_files_and_database(sample_df, final_plates_df, new_plates_df, folde
     
     # File Management - Organize output and input files
     manage_bartender_file(bartender_filename, folders)
-    manage_input_files(folders, is_first_run)
+    manage_input_files(folders, is_first_run, custom_plates_processed, additional_plates_processed)
     
     # CSV Management - Archive and create updated CSV files
     manage_csv_files(sample_df, final_plates_df, folders)
@@ -1309,9 +1329,9 @@ def main():
     # Process plates based on run type
     is_first_run = existing_sample_df is None
     if is_first_run:
-        sample_df, plates_df = process_first_run()
+        sample_df, plates_df, custom_plates_processed, additional_plates_processed = process_first_run()
     else:
-        sample_df, plates_df = process_subsequent_run(existing_sample_df, existing_plates_df)
+        sample_df, plates_df, custom_plates_processed, additional_plates_processed = process_subsequent_run(existing_sample_df, existing_plates_df)
         if plates_df.empty:
             print("No new plates to add. Exiting.")
             return
@@ -1320,7 +1340,7 @@ def main():
     plates_df, final_plates_df = process_barcodes(plates_df, existing_plates_df)
     
     # Handle all file operations
-    finalize_files_and_database(sample_df, final_plates_df, plates_df, folders, is_first_run)
+    finalize_files_and_database(sample_df, final_plates_df, plates_df, folders, is_first_run, custom_plates_processed, additional_plates_processed)
     
     # Print completion summary
     print_completion_summary(sample_df, final_plates_df, plates_df)
