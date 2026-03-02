@@ -716,8 +716,12 @@ def create_illumina_index_files(all_plate_layouts_with_indexes, individual_plate
 
 def select_wells_for_fa_transfer(plate_df):
     """
-    Select 96 wells from a 384-well plate for FA transfer using column-wise numbering.
-    Excludes columns that only contain unused + ladder wells, but always includes ladder wells.
+    Select wells from a 384-well plate for FA transfer using new logic:
+    - Exclude columns containing only 'unused' or 'ladder' wells
+    - Number remaining wells column-wise until reaching the last pos_cntrl well
+    - If ≤92 wells total: select all
+    - If >92 wells total: select first 48 + last 44 wells
+    - Last selected well must be pos_cntrl type
     
     Args:
         plate_df (pd.DataFrame): Plate layout DataFrame
@@ -725,79 +729,68 @@ def select_wells_for_fa_transfer(plate_df):
     Returns:
         pd.DataFrame: Selected wells for FA transfer
     """
-    # Step 1: Identify valid columns (have samples, controls, etc. - not just unused/ladder)
+    # Step 1: Identify valid columns (exclude columns with only unused/ladder wells)
     valid_columns = []
-    ladder_only_columns = []
     
     for col in range(1, 25):  # Columns 1-24
         col_wells = plate_df[plate_df['Well_Col'] == col]
-        non_unused_wells = col_wells[col_wells['Type'] != 'unused']
-        non_unused_non_ladder_wells = col_wells[~col_wells['Type'].isin(['unused', 'ladder'])]
+        # Check if column has any wells that are NOT unused or ladder
+        non_excluded_wells = col_wells[~col_wells['Type'].isin(['unused', 'ladder'])]
         
-        if len(non_unused_non_ladder_wells) > 0:
+        if len(non_excluded_wells) > 0:
             # Column has samples/controls - include it
             valid_columns.append(col)
-        elif len(non_unused_wells) > 0:
-            # Column only has unused + ladder wells - exclude column but note ladder
-            ladder_only_columns.append(col)
     
     if not valid_columns:
         print(f"⚠️  WARNING: No valid columns found for FA transfer")
         return pd.DataFrame()
     
-    # Valid columns identified - no detailed output needed
-    
-    # Step 2: Get wells from valid columns only
+    # Step 2: Get wells from valid columns only and sort column-wise
     valid_wells = plate_df[plate_df['Well_Col'].isin(valid_columns)].copy()
-    
-    # Step 3: Get ladder wells from excluded columns
-    excluded_ladder_wells = plate_df[
-        (plate_df['Well_Col'].isin(ladder_only_columns)) &
-        (plate_df['Type'] == 'ladder')
-    ].copy()
-    
-    # Step 4: Add sequential numbering (column-wise within valid columns)
     valid_wells = valid_wells.sort_values(['Well_Col', 'Well_Row'])
     valid_wells['sequential_number'] = range(1, len(valid_wells) + 1)
     
-    # Step 5: Select wells accounting for ladder space
-    total_valid_wells = len(valid_wells)
-    num_excluded_ladders = len(excluded_ladder_wells)
-    wells_to_select = 96 - num_excluded_ladders
+    # Step 3: Find the last pos_cntrl well
+    pos_cntrl_wells = valid_wells[valid_wells['Type'] == 'pos_cntrl']
+    if pos_cntrl_wells.empty:
+        print(f"⚠️  WARNING: No pos_cntrl wells found for FA transfer")
+        return pd.DataFrame()
     
-    if total_valid_wells <= wells_to_select:
-        selected_wells = valid_wells
+    # Get the sequential number of the last pos_cntrl well
+    last_pos_cntrl_number = pos_cntrl_wells['sequential_number'].max()
+    
+    # Step 4: Get all wells up to and including the last pos_cntrl well
+    wells_up_to_last_pos_cntrl = valid_wells[valid_wells['sequential_number'] <= last_pos_cntrl_number].copy()
+    
+    # Step 5: Apply selection logic
+    total_wells = len(wells_up_to_last_pos_cntrl)
+    
+    if total_wells <= 92:
+        # Select all wells
+        selected_wells = wells_up_to_last_pos_cntrl
         # Selected all wells - no detailed output needed
     else:
-        # Need to select first 48 + last (wells_to_select - 48)
-        first_48 = valid_wells.head(48)
-        last_n_count = wells_to_select - 48
-        
-        if num_excluded_ladders > 0:
-            # Skip the very last well to make room for excluded ladder
-            if last_n_count > 0:
-                last_n = valid_wells.iloc[-(last_n_count+1):-1]
-            else:
-                last_n = pd.DataFrame()
-            # Wells selected with ladder accommodation - no detailed output needed
-        else:
-            # Normal selection - no excluded ladders
-            last_n = valid_wells.tail(last_n_count)
-            # Wells selected normally - no detailed output needed
-        
-        selected_wells = pd.concat([first_48, last_n])
+        # Select first 48 + last 44 wells
+        first_48 = wells_up_to_last_pos_cntrl.head(48)
+        last_44 = wells_up_to_last_pos_cntrl.tail(44)
+        selected_wells = pd.concat([first_48, last_44])
+        # Wells selected using 48+44 logic - no detailed output needed
     
-    # Step 6: Add excluded ladder wells
-    if len(excluded_ladder_wells) > 0:
-        selected_wells = pd.concat([selected_wells, excluded_ladder_wells])
-        # Ladder wells added - no detailed output needed
+    # Step 6: Verify the last selected well is pos_cntrl
+    if not selected_wells.empty:
+        last_selected_well = selected_wells.iloc[-1]
+        if last_selected_well['Type'] != 'pos_cntrl':
+            print(f"⚠️  WARNING: Last selected well is not pos_cntrl type: {last_selected_well['Type']}")
     
     return selected_wells.drop('sequential_number', axis=1, errors='ignore')
 
 
 def assign_fa_wells(selected_wells_df):
     """
-    Assign FA well positions to selected wells.
+    Assign FA well positions to selected wells using new 92-position layout:
+    - Columns 1-11: All rows (A-H) = 88 positions
+    - Column 12: Only rows A-D = 4 positions
+    - Total: 92 positions for real samples
     
     Args:
         selected_wells_df (pd.DataFrame): Selected wells DataFrame
@@ -805,41 +798,49 @@ def assign_fa_wells(selected_wells_df):
     Returns:
         pd.DataFrame: DataFrame with FA_Well column added
     """
-    # Sort by Index_Set, then column, then row
-    sorted_df = selected_wells_df.sort_values(['Index_Set', 'Well_Col', 'Well_Row']).copy()
+    # Create a copy for sorting
+    sorted_df = selected_wells_df.copy()
     
-    # Generate 96-well positions column-wise (A1, B1, C1, ..., H1, A2, B2, ...)
+    # Create sorting helper columns
+    # Map row letters to numbers for odd/even sorting
+    row_mapping = {'A': 1, 'B': 2, 'C': 3, 'D': 4, 'E': 5, 'F': 6, 'G': 7, 'H': 8,
+                   'I': 9, 'J': 10, 'K': 11, 'L': 12, 'M': 13, 'N': 14, 'O': 15, 'P': 16}
+    
+    sorted_df['row_number'] = sorted_df['Well_Row'].map(row_mapping)
+    sorted_df['is_odd_row'] = sorted_df['row_number'] % 2 == 1  # True for odd rows (A,C,E,G,I,K,M,O), False for even rows (B,D,F,H,J,L,N,P)
+    
+    # Sort by: plate name, then column, then odd rows first (True before False), then row number
+    sorted_df = sorted_df.sort_values(['Plate_ID', 'Well_Col', 'is_odd_row', 'row_number'], ascending=[True, True, False, True])
+    
+    # Remove helper columns
+    sorted_df = sorted_df.drop(['row_number', 'is_odd_row'], axis=1)
+    
+    # Generate 92 FA well positions using new layout
     fa_wells = []
     rows = 'ABCDEFGH'
-    for col in range(1, 13):  # Columns 1-12 in 96-well plate
+    
+    # Columns 1-11: All rows (A1-H1, A2-H2, ..., A11-H11)
+    for col in range(1, 12):  # Columns 1-11
         for row in rows:  # Rows A-H
             fa_wells.append(f"{row}{col}")
+    
+    # Column 12: Only rows A-D (A12, B12, C12, D12)
+    for row in 'ABCD':  # Only rows A-D
+        fa_wells.append(f"{row}12")
     
     # Initialize FA_Well column
     sorted_df['FA_Well'] = ''
     
-    # Handle ladder wells first (always go to H12)
-    ladder_wells = sorted_df[sorted_df['Type'] == 'ladder']
-    if len(ladder_wells) > 0:
-        # Assign all ladder wells to H12 (if multiple ladders, they'll overwrite - last one wins)
-        sorted_df.loc[sorted_df['Type'] == 'ladder', 'FA_Well'] = 'H12'
-        # Ladder wells assigned - no detailed output needed
-    
-    # Assign FA wells to non-ladder wells
-    non_ladder_wells = sorted_df[sorted_df['Type'] != 'ladder']
+    # Assign FA wells to all selected wells sequentially
     fa_index = 0
     
-    for idx in non_ladder_wells.index:
-        # Skip H12 if it's reserved for ladder
-        if fa_wells[fa_index] == 'H12' and len(ladder_wells) > 0:
+    for idx in sorted_df.index:
+        if fa_index < len(fa_wells):
+            sorted_df.at[idx, 'FA_Well'] = fa_wells[fa_index]
             fa_index += 1
-            if fa_index >= len(fa_wells):
-                break
-        
-        sorted_df.at[idx, 'FA_Well'] = fa_wells[fa_index]
-        fa_index += 1
-        
-        if fa_index >= len(fa_wells):
+        else:
+            # Should not happen if selection logic is correct (max 92 wells)
+            print(f"⚠️  WARNING: More wells selected than FA positions available")
             break
     
     # FA wells assigned - no detailed output needed
@@ -908,8 +909,11 @@ def create_fa_transfer_files(fa_well_assignments, individual_plates_df):
 
 def create_fa_input_files(fa_well_assignments, individual_plates_df):
     """
-    Create FA input files for each plate with 3 columns: number (1-96), FA_well, barcode_platename_well.
-    Uses pre-computed FA well assignments to avoid redundant processing.
+    Create FA input files for each plate with 3 columns: number (1-96), FA_well, sample_name.
+    New logic:
+    - Wells with source samples: {barcode}_{plate_name}_{well}
+    - Wells without source samples: "empty"
+    - E12: "LibStd_E12", F12: "LibStd_F12", G12: "LibStd_G12", H12: "ladder_H12"
     
     Args:
         fa_well_assignments (dict): Dictionary of plate_name -> DataFrame with FA well assignments
@@ -923,11 +927,6 @@ def create_fa_input_files(fa_well_assignments, individual_plates_df):
     for plate_name, fa_wells_df in fa_well_assignments.items():
         # Processing FA input - no detailed output needed
         
-        # Skip plates with no FA well assignments
-        if fa_wells_df.empty:
-            print(f"⚠️  WARNING: No wells selected for FA input for plate '{plate_name}'")
-            continue
-        
         # Get barcode for this plate from database
         plate_row = individual_plates_df[individual_plates_df['plate_name'] == plate_name]
         if plate_row.empty:
@@ -936,74 +935,49 @@ def create_fa_input_files(fa_well_assignments, individual_plates_df):
         
         barcode = plate_row['barcode'].iloc[0]
         
-        # Step 3: Sort by FA well position column-wise (A1, B1, C1, ..., H1, A2, B2, ...)
-        # Extract FA well row and column for sorting
-        fa_wells_df['fa_row'] = fa_wells_df['FA_Well'].str[0]  # A, B, C, etc.
-        fa_wells_df['fa_col'] = fa_wells_df['FA_Well'].str[1:].astype(int)  # 1, 2, 3, etc.
+        # Generate all 96 FA well positions column-wise
+        all_fa_wells = []
+        rows = 'ABCDEFGH'
+        for col in range(1, 13):  # Columns 1-12 in 96-well plate
+            for row in rows:  # Rows A-H
+                all_fa_wells.append(f"{row}{col}")
         
-        # Sort column-wise: by FA column first, then by FA row
-        fa_wells_sorted = fa_wells_df.sort_values(['fa_col', 'fa_row'])
+        # Create mapping of FA wells to source wells (if any)
+        fa_well_to_source = {}
+        if not fa_wells_df.empty:
+            # Sort by FA well position for consistent ordering
+            fa_wells_df['fa_row'] = fa_wells_df['FA_Well'].str[0]
+            fa_wells_df['fa_col'] = fa_wells_df['FA_Well'].str[1:].astype(int)
+            fa_wells_sorted = fa_wells_df.sort_values(['fa_col', 'fa_row'])
+            
+            for _, row in fa_wells_sorted.iterrows():
+                fa_well = row['FA_Well']
+                source_well = row['Well']
+                fa_well_to_source[fa_well] = f"{barcode}_{plate_name}_{source_well}"
         
-        # Step 4: Create the three columns for FA input file
+        # Create output rows for all 96 FA wells
         output_rows = []
         
-        # Process actual wells first
-        for i, (_, row) in enumerate(fa_wells_sorted.iterrows(), 1):
-            fa_well = row['FA_Well']
-            sort_well = row['Well']
-            
-            # Create barcode_platename_well format
-            barcode_platename_well = f"{barcode}_{plate_name}_{sort_well}"
-            
-            # Override specific FA wells with fixed names
-            if fa_well == 'A1':
-                barcode_platename_well = "library_control_A1"
-            elif fa_well == 'H1':
-                barcode_platename_well = "library_control_H1"
-            elif fa_well == 'A12':
-                barcode_platename_well = "library_control_A12"
+        for i, fa_well in enumerate(all_fa_wells, 1):
+            # Determine the sample name for this FA well
+            if fa_well == 'E12':
+                sample_name = "LibStd_E12"
+            elif fa_well == 'F12':
+                sample_name = "LibStd_F12"
+            elif fa_well == 'G12':
+                sample_name = "LibStd_G12"
             elif fa_well == 'H12':
-                barcode_platename_well = "ladder"
+                sample_name = "ladder_H12"
+            elif fa_well in fa_well_to_source:
+                # Has a source well
+                sample_name = fa_well_to_source[fa_well]
+            else:
+                # No source well - empty
+                sample_name = "empty"
             
-            output_rows.append([i, fa_well, barcode_platename_well])
+            output_rows.append([i, fa_well, sample_name])
         
-        # If fewer than 96 wells, fill remaining positions with "empty"
-        num_actual_wells = len(fa_wells_sorted)
-        if num_actual_wells < 96:
-            # Generate all 96 FA well positions
-            all_fa_wells = []
-            rows = 'ABCDEFGH'
-            for col in range(1, 13):  # Columns 1-12 in 96-well plate
-                for row in rows:  # Rows A-H
-                    all_fa_wells.append(f"{row}{col}")
-            
-            # Find which FA wells are already used
-            used_fa_wells = set(fa_wells_sorted['FA_Well'].tolist())
-            
-            # Add empty wells for unused FA positions
-            for i in range(num_actual_wells + 1, 97):  # Continue from where we left off to 96
-                # Find the next unused FA well position
-                for fa_well in all_fa_wells:
-                    if fa_well not in used_fa_wells:
-                        # Check if this should be a control well
-                        if fa_well == 'A1':
-                            well_name = "library_control_A1"
-                        elif fa_well == 'H1':
-                            well_name = "library_control_H1"
-                        elif fa_well == 'A12':
-                            well_name = "library_control_A12"
-                        elif fa_well == 'H12':
-                            well_name = "ladder"
-                        else:
-                            well_name = "empty"
-                        
-                        output_rows.append([i, fa_well, well_name])
-                        used_fa_wells.add(fa_well)
-                        break
-            
-            # Empty wells added - no detailed output needed
-        
-        # Step 5: Create output file (no headers)
+        # Create output file (no headers)
         if output_rows:
             # Create filename: FA_input_{plate_name}_{barcode}.csv
             safe_plate_name = plate_name.replace('/', '_').replace('\\', '_')
