@@ -34,7 +34,7 @@ Input File Organization (2_library_creation/ folder):
 Output File Organization (2_library_creation/ folder):
 - Illumina_index_transfer_files/: Index primer transfer protocols
 - FA_transfer_files/: Fragment Analyzer transfer protocols
-- FA_input_files/: Fragment Analyzer input manifests
+- FA_upload_files/: Fragment Analyzer upload manifests
 - previously_processed_files/: Organized archive of processed input files
 
 Database Schema (Three-Table Architecture):
@@ -907,9 +907,9 @@ def create_fa_transfer_files(fa_well_assignments, individual_plates_df):
     print(f"✅ Completed FA transfer file generation")
 
 
-def create_fa_input_files(fa_well_assignments, individual_plates_df):
+def create_fa_upload_files(fa_well_assignments, individual_plates_df):
     """
-    Create FA input files for each plate with 3 columns: number (1-96), FA_well, sample_name.
+    Create FA upload files for each plate with 3 columns: number (1-96), FA_well, sample_name.
     New logic:
     - Wells with source samples: {barcode}_{plate_name}_{well}
     - Wells without source samples: "empty"
@@ -920,12 +920,12 @@ def create_fa_input_files(fa_well_assignments, individual_plates_df):
         individual_plates_df (pd.DataFrame): Database plate information for barcode lookup
     """
     # Create output directory if it doesn't exist
-    output_dir = Path("2_library_creation/FA_input_files")
+    output_dir = Path("2_library_creation/FA_upload_files")
     output_dir.mkdir(exist_ok=True)
     # Output directory created - no output needed
     
     for plate_name, fa_wells_df in fa_well_assignments.items():
-        # Processing FA input - no detailed output needed
+        # Processing FA upload - no detailed output needed
         
         # Get barcode for this plate from database
         plate_row = individual_plates_df[individual_plates_df['plate_name'] == plate_name]
@@ -979,10 +979,10 @@ def create_fa_input_files(fa_well_assignments, individual_plates_df):
         
         # Create output file (no headers)
         if output_rows:
-            # Create filename: FA_input_{plate_name}_{barcode}.csv
+            # Create filename: FA_upload_{plate_name}_{barcode}.csv
             safe_plate_name = plate_name.replace('/', '_').replace('\\', '_')
             safe_barcode = barcode.replace('/', '_').replace('\\', '_')
-            csv_filename = output_dir / f"FA_input_{safe_plate_name}_{safe_barcode}.csv"
+            csv_filename = output_dir / f"FA_upload_{safe_plate_name}_{safe_barcode}.csv"
             
             # Write to CSV without headers
             with open(csv_filename, 'w', newline='') as f:
@@ -990,9 +990,9 @@ def create_fa_input_files(fa_well_assignments, individual_plates_df):
                 writer = csv.writer(f)
                 writer.writerows(output_rows)
             
-            # FA input file created - no detailed output needed
+            # FA upload file created - no detailed output needed
     
-    print(f"✅ Completed FA input file generation")
+    print(f"✅ Completed FA upload file generation")
 
 
 def create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments, individual_plates_df):
@@ -1503,8 +1503,8 @@ def main():
     # Create FA transfer files using pre-computed FA selections
     create_fa_transfer_files(fa_well_assignments, individual_plates_df)
     
-    # Create FA input files using pre-computed FA selections
-    create_fa_input_files(fa_well_assignments, individual_plates_df)
+    # Create FA upload files using pre-computed FA selections
+    create_fa_upload_files(fa_well_assignments, individual_plates_df)
     
     # Step 6: Handle master DataFrame based on run type
     if is_first_run:
