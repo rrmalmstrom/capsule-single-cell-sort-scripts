@@ -1,18 +1,60 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Capsule FA Analysis Script
+Laboratory Fragment Analyzer (FA) Quality Analysis Script
 
-This script processes Fragment Analyzer (FA) output files to analyze DNA library quality.
-It reads FA smear analysis results, merges them with master plate data, applies
-quality thresholds, and generates summary reports for library pass/fail analysis.
+This script processes Fragment Analyzer output files to analyze DNA library quality
+with automated index set failure detection and comprehensive database integration
+following laboratory automation standards.
 
-The script expects to be run from the project root directory and will:
-1. Find and process FA output CSV files in 3_FA_analysis/
-2. Merge with master_plate_data from project_summary.db
-3. Apply quality thresholds from thresholds.txt
-4. Generate reduced summary output file
+USAGE: python capsule_fa_analysis.py
 
+CRITICAL REQUIREMENTS:
+- MUST use sip-lims conda environment
+- Follows existing SPS script patterns
+- Implements comprehensive error handling with systematic validation
+- Supports automated quality assessment with 50% failure thresholds
+
+Features:
+- Automated FA output file discovery and processing from subdirectories
+- Index set failure rate analysis (PE17, PE18, PE19, PE20) using only 'sample' type wells
+- 50% failure threshold logic for both index sets and whole plate rework decisions
+- Failed index set extrapolation to entire library plates
+- Comprehensive database integration with timestamped archiving
+- Master plate data updates with FA results and quality assessments
+- FA result directory archiving with organized folder management
+- Detailed quality reporting with pass/fail analysis
+
+Input File Organization (3_FA_analysis/ folder):
+- thresholds.txt: DNA concentration and size thresholds per destination plate
+- Subdirectories with FA instrument output: {date}/{plate_name}/
+- *Smear Analysis Result.csv: FA instrument output files (automatically discovered)
+
+Output File Organization (3_FA_analysis/ folder):
+- reduced_fa_analysis_summary_{timestamp}.txt: Comprehensive quality analysis results
+- {plate_name}.csv: Processed FA data files (copied from subdirectories)
+- archived_files/capsule_fa_analysis_results/: Organized archive of processed FA files
+
+Database Schema Integration:
+- Reads from existing three-table architecture (sample_metadata, individual_plates, master_plate_data)
+- Archives existing database and CSV files with timestamps
+- Updates master_plate_data with FA results: dilution_factor, ng/uL, nmol/L, Avg. Size, Passed_library, Failed_index_sets, Redo_whole_plate
+- Database file: project_summary.db (working directory)
+
+Index Set Failure Analysis:
+- Calculates failure rates per index set (PE17, PE18, PE19, PE20) using only FA-analyzed 'sample' wells
+- Applies 50% failure threshold to identify failed index sets
+- Extrapolates failed index set results to all wells on the same library plate
+- Failed_index_sets column contains Python lists of failed index sets (e.g., ['PE17', 'PE19'])
+- Whole plate rework determined by overall 50% failure rate across all sample wells
+
+Quality Threshold System:
+- Per-plate DNA concentration thresholds (nmol/L) and size thresholds (bp)
+- Automatic dilution factor application for original library concentration calculation
+- Pass/fail determination based on both concentration and size criteria
+- Systematic quality reporting with detailed failure rate statistics
+
+Note: create_success_marker function commented out per user request
 """
 
 
@@ -25,21 +67,21 @@ import numpy as np
 from datetime import datetime
 
 
-def create_success_marker():
-    """Create success marker file for workflow manager integration."""
-    script_name = Path(__file__).stem
-    status_dir = Path(".workflow_status")
-    status_dir.mkdir(exist_ok=True)
-    success_file = status_dir / f"{script_name}.success"
+# def create_success_marker():
+#     """Create success marker file for workflow manager integration."""
+#     script_name = Path(__file__).stem
+#     status_dir = Path(".workflow_status")
+#     status_dir.mkdir(exist_ok=True)
+#     success_file = status_dir / f"{script_name}.success"
     
-    try:
-        with open(success_file, "w") as f:
-            f.write(f"SUCCESS: {script_name} completed at {datetime.now()}\n")
-        print(f"✅ Success marker created: {success_file}")
-    except Exception as e:
-        print(f"❌ ERROR: Could not create success marker: {e}")
-        print("Script failed - workflow manager integration requires success marker")
-        sys.exit()
+#     try:
+#         with open(success_file, "w") as f:
+#             f.write(f"SUCCESS: {script_name} completed at {datetime.now()}\n")
+#         print(f"✅ Success marker created: {success_file}")
+#     except Exception as e:
+#         print(f"❌ ERROR: Could not create success marker: {e}")
+#         print("Script failed - workflow manager integration requires success marker")
+#         sys.exit()
 
 
 # Define paths using pathlib strategy
@@ -378,7 +420,7 @@ def addFAresults(my_prjct_dir, my_fa_df):
 ##########################
 def findPassFailLibs(my_lib_df, my_dest_plates):
     """
-    Apply quality thresholds and identify pass/fail libraries.
+    Apply quality thresholds and identify pass/fail libraries using new index set failure logic.
     
     Args:
         my_lib_df: DataFrame with merged library and FA data
@@ -409,11 +451,6 @@ def findPassFailLibs(my_lib_df, my_dest_plates):
         print(missing_thresholds['Plate_Barcode'].unique())
         sys.exit()
 
-    # get max number of failed libs per plate before triggering whole plate rework
-    min_failed_libs = float(
-        input("""How many failed libs per plate to trigger whole plate rework?\n
-              Default threshold is 20: """) or 20)
-
     # assign pass or fail to each lib based on dna conc and size thresholds
     my_lib_df['Passed_library'] = np.where(((my_lib_df['nmole/L'] > my_lib_df['DNA_conc_threshold_(nmol/L)']) & (
         my_lib_df['Avg. Size'] > my_lib_df['Size_theshold_(bp)'])), 1, 0)
@@ -431,28 +468,217 @@ def findPassFailLibs(my_lib_df, my_dest_plates):
     my_lib_df.drop(['Destination_plate', 'DNA_conc_threshold_(nmol/L)',
                    'Size_theshold_(bp)'], inplace=True, axis=1)
 
-    # create empty list for whole plates that need rework
-    whole_plate_redo = []
+    # NEW: Calculate index set failure rates and identify failed index sets
+    print("📊 Calculating index set failure rates...")
     
-    # NEW: Use Plate_Barcode for identifying plates that need rework
-    for val, cnt in my_lib_df[(my_lib_df['Passed_library'] == 0)]['Plate_Barcode'].value_counts().items():
+    # Initialize new columns
+    my_lib_df['Failed_index_sets'] = [[] for _ in range(len(my_lib_df))]
+    my_lib_df['Redo_whole_plate'] = False
     
-        if cnt >= min_failed_libs:
-            whole_plate_redo.append(val)
+    # Group by Plate_Barcode to analyze each FA plate separately
+    for plate_barcode in my_lib_df['Plate_Barcode'].unique():
+        plate_mask = my_lib_df['Plate_Barcode'] == plate_barcode
+        plate_data = my_lib_df[plate_mask].copy()
         
-
-    # sort the list of whole plates that neede to be reworked
-    whole_plate_redo = sorted(whole_plate_redo)
-
-    my_lib_df['Redo_whole_plate'] = ""
-
-    # NEW: Use Plate_Barcode for identifying libs that are part of a whole plate rework
-    my_lib_df.loc[my_lib_df['Plate_Barcode'].isin(
-        whole_plate_redo), 'Redo_whole_plate'] = True
+        # Only analyze 'sample' type wells that were FA-analyzed
+        fa_samples = plate_data[plate_data['Type'] == 'sample'].copy()
+        
+        if len(fa_samples) == 0:
+            print(f"⚠️  No sample wells found for plate {plate_barcode}")
+            continue
+            
+        print(f"📋 Analyzing plate {plate_barcode}: {len(fa_samples)} sample wells")
+        
+        # Calculate failure rates for each index set
+        failed_index_sets = []
+        index_set_stats = {}
+        
+        for index_set in ['PE17', 'PE18', 'PE19', 'PE20']:
+            index_samples = fa_samples[fa_samples['Index_Set'] == index_set]
+            
+            if len(index_samples) == 0:
+                continue
+                
+            failed_count = len(index_samples[index_samples['Passed_library'] == 0])
+            total_count = len(index_samples)
+            failure_rate = failed_count / total_count if total_count > 0 else 0
+            
+            index_set_stats[index_set] = {
+                'failed': failed_count,
+                'total': total_count,
+                'rate': failure_rate
+            }
+            
+            print(f"  {index_set}: {failed_count}/{total_count} failed ({failure_rate:.1%})")
+            
+            # Mark index set as failed if >50% failure rate
+            if failure_rate > 0.5:
+                failed_index_sets.append(index_set)
+                print(f"  ❌ {index_set} FAILED (>{50}% failure rate)")
+        
+        # Calculate overall failure rate for this plate
+        total_failed = len(fa_samples[fa_samples['Passed_library'] == 0])
+        total_samples = len(fa_samples)
+        overall_failure_rate = total_failed / total_samples if total_samples > 0 else 0
+        
+        print(f"  Overall: {total_failed}/{total_samples} failed ({overall_failure_rate:.1%})")
+        
+        # Determine if whole plate needs rework (>50% overall failure)
+        plate_needs_rework = overall_failure_rate > 0.5
+        if plate_needs_rework:
+            print(f"  ❌ WHOLE PLATE REWORK REQUIRED (>{50}% overall failure)")
+        
+        # Apply results to ALL wells on this library plate (not just FA-analyzed ones)
+        # This extrapolates FA results to the entire library plate
+        # Convert list to string for storage in DataFrame
+        failed_index_sets_str = str(failed_index_sets)
+        my_lib_df.loc[plate_mask, 'Failed_index_sets'] = failed_index_sets_str
+        my_lib_df.loc[plate_mask, 'Redo_whole_plate'] = plate_needs_rework
+        
+        print(f"  ✅ Applied results to {plate_mask.sum()} total wells on library plate")
+        
+        if failed_index_sets:
+            print(f"  📝 Failed index sets: {failed_index_sets}")
 
     return my_lib_df
 ##########################
 ##########################
+
+def archive_database_file():
+    """
+    Archive existing database file with timestamp suffix.
+    Follows the same archiving pattern as generate_lib_creation_files.py.
+    """
+    db_path = Path("project_summary.db")
+    
+    # Archive existing database file if it exists
+    if db_path.exists():
+        timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
+        archive_dir = Path("archived_files")
+        archive_dir.mkdir(exist_ok=True)
+        
+        # Create archive name with timestamp suffix
+        stem = db_path.stem  # "project_summary"
+        suffix = db_path.suffix  # ".db"
+        archive_name = f"{stem}_{timestamp}{suffix}"
+        archive_path = archive_dir / archive_name
+        
+        shutil.move(str(db_path), str(archive_path))
+        print(f"✅ Archived database: {archive_name}")
+        
+        # Also archive master CSV file if it exists
+        archive_master_csv_file()
+    else:
+        print("⚠️  No existing database file to archive")
+
+
+def archive_master_csv_file():
+    """
+    Archive existing master DataFrame CSV file with timestamp suffix.
+    """
+    csv_path = Path("library_dataframe.csv")
+    
+    if csv_path.exists():
+        timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
+        archive_dir = Path("archived_files")
+        archive_dir.mkdir(exist_ok=True)
+        
+        # Create archive name with timestamp suffix
+        stem = csv_path.stem  # "library_dataframe"
+        suffix = csv_path.suffix  # ".csv"
+        archive_name = f"{stem}_{timestamp}{suffix}"
+        archive_path = archive_dir / archive_name
+        
+        shutil.move(str(csv_path), str(archive_path))
+        print(f"✅ Archived master CSV: {archive_name}")
+    else:
+        print("⚠️  No existing master CSV file to archive")
+
+
+def update_database_with_fa_results(fa_summary_df, sample_metadata_df, individual_plates_df, master_plate_data_df):
+    """
+    Create updated database with existing tables plus FA analysis results.
+    Follows the same pattern as generate_lib_creation_files.py.
+    
+    Args:
+        fa_summary_df: DataFrame containing FA analysis results with all wells
+        sample_metadata_df: Existing sample metadata (unchanged)
+        individual_plates_df: Existing individual plates (unchanged)
+        master_plate_data_df: Existing master plate data to be updated with FA results
+    """
+    print("📊 Creating updated database with FA analysis results...")
+    
+    try:
+        # Prepare FA results for merging - only keep FA-specific columns
+        fa_columns_to_merge = ['Plate_ID', 'Well', 'dilution_factor', 'ng/uL', 'nmole/L', 'Avg. Size', 'Passed_library', 'Failed_index_sets', 'Redo_whole_plate']
+        fa_merge_df = fa_summary_df[fa_columns_to_merge].copy()
+        
+        # Merge FA results with existing master_plate_data
+        # Use left join to preserve all existing data, only updating wells that have FA results
+        updated_master_df = master_plate_data_df.merge(
+            fa_merge_df,
+            on=['Plate_ID', 'Well'],
+            how='left',
+            suffixes=('', '_fa')
+        )
+        
+        # Update columns with FA results where available
+        fa_result_columns = ['dilution_factor', 'ng/uL', 'nmole/L', 'Avg. Size', 'Passed_library', 'Failed_index_sets', 'Redo_whole_plate']
+        
+        for col in fa_result_columns:
+            fa_col = f"{col}_fa"
+            if fa_col in updated_master_df.columns:
+                # Update existing column with FA results where available
+                mask = updated_master_df[fa_col].notna()
+                if col not in updated_master_df.columns:
+                    # Create new column if it doesn't exist
+                    updated_master_df[col] = pd.NA
+                updated_master_df.loc[mask, col] = updated_master_df.loc[mask, fa_col]
+                # Drop the temporary FA column
+                updated_master_df.drop(fa_col, axis=1, inplace=True)
+            elif col not in updated_master_df.columns:
+                # Add new column with default values if it doesn't exist
+                if col == 'Failed_index_sets':
+                    updated_master_df[col] = [[] for _ in range(len(updated_master_df))]
+                elif col == 'Redo_whole_plate':
+                    updated_master_df[col] = False
+                else:
+                    updated_master_df[col] = pd.NA
+        
+        # Count how many wells were updated
+        fa_updated_count = len(fa_merge_df)
+        print(f"✅ Updated {fa_updated_count} wells with FA analysis results")
+        
+        # Create new database with all three tables (following generate_lib_creation_files.py pattern)
+        db_path = Path("project_summary.db")
+        engine = create_engine(f'sqlite:///{db_path}')
+        
+        # Save existing tables (unchanged)
+        sample_metadata_df.to_sql('sample_metadata', engine, if_exists='replace', index=False)
+        individual_plates_df.to_sql('individual_plates', engine, if_exists='replace', index=False)
+        
+        # Add updated master DataFrame table
+        updated_master_df.to_sql('master_plate_data', engine, if_exists='replace', index=False)
+        
+        # Properly dispose of engine
+        engine.dispose()
+        
+        print(f"✅ Created updated database with 3 tables:")
+        print(f"  - sample_metadata: {len(sample_metadata_df)} records")
+        print(f"  - individual_plates: {len(individual_plates_df)} records")
+        print(f"  - master_plate_data: {len(updated_master_df)} records")
+        
+        # Generate updated master CSV file
+        output_filename = "library_dataframe.csv"
+        updated_master_df.to_csv(output_filename, index=False)
+        print(f"✅ Generated updated master CSV: {output_filename}")
+        
+        return updated_master_df
+        
+    except Exception as e:
+        print(f"❌ FATAL ERROR: Could not create updated database: {e}")
+        sys.exit(1)
+
 
 def archive_fa_results(fa_result_dirs, archive_subdir_name):
     """Archive FA result directories to permanent storage by copying them"""
@@ -483,7 +709,31 @@ def main():
     """
     print("Starting Capsule FA Analysis...")
     
-    # MODIFIED: Update function call to receive both returns
+    # Step 1: Read database tables FIRST (before archiving) - following generate_lib_creation_files.py pattern
+    print("📊 Reading existing database tables...")
+    sql_db_path = Path("project_summary.db")
+    if not sql_db_path.exists():
+        print("❌ ERROR: project_summary.db not found")
+        sys.exit()
+    
+    try:
+        # Create sqlalchemy engine and read all tables
+        engine = create_engine(f'sqlite:///{sql_db_path}')
+        sample_metadata_df = pd.read_sql('SELECT * FROM sample_metadata', engine)
+        individual_plates_df = pd.read_sql('SELECT * FROM individual_plates', engine)
+        master_plate_data_df = pd.read_sql('SELECT * FROM master_plate_data', engine)
+        engine.dispose()
+        
+        print(f"✅ Read database tables:")
+        print(f"  - sample_metadata: {len(sample_metadata_df)} records")
+        print(f"  - individual_plates: {len(individual_plates_df)} records")
+        print(f"  - master_plate_data: {len(master_plate_data_df)} records")
+        
+    except Exception as e:
+        print(f"❌ ERROR: Could not read database: {e}")
+        sys.exit()
+    
+    # Step 2: Get FA files and process them
     fa_files, fa_result_dirs_to_archive = getFAfiles(FA_DIR)
 
     # get dictionary where keys are FA file names and values are df's created from FA files
@@ -493,32 +743,45 @@ def main():
     # create new dataframe combining all entries in dictionary fa_lib_dict
     fa_df = pd.concat(fa_lib_dict.values(), ignore_index=True)
 
-    # add FA results to df from master_plate_data
+    # add FA results to df from master_plate_data (use the pre-read data)
     lib_df = addFAresults(PROJECT_DIR, fa_df)
 
-    # identify libs that passed/failed based on user provided thresholds
+    # identify libs that passed/failed based on new index set failure logic
     fa_summary_df = findPassFailLibs(lib_df, fa_dest_plates)
 
-    # NEW: Create output with correct column names as specified in requirements
-    # Expected columns: Plate_ID, Well, Plate_Barcode, FA_Well, dilution_factor, ng/uL, nmole/L, Avg. Size, Passed_library, Redo_whole_plate
-    reduced_fa_df = fa_summary_df[['Plate_ID', 'Well', 'Plate_Barcode', 'FA_Well', 'dilution_factor', 'ng/uL', 'nmole/L', 'Avg. Size', 'Passed_library', 'Redo_whole_plate']].copy()
+    # NEW: Create output with correct column names including Failed_index_sets
+    # Expected columns: Plate_ID, Well, Plate_Barcode, FA_Well, dilution_factor, ng/uL, nmole/L, Avg. Size, Passed_library, Failed_index_sets, Redo_whole_plate
+    reduced_fa_df = fa_summary_df[['Plate_ID', 'Well', 'Plate_Barcode', 'FA_Well', 'dilution_factor', 'ng/uL', 'nmole/L', 'Avg. Size', 'Passed_library', 'Failed_index_sets', 'Redo_whole_plate']].copy()
 
     reduced_fa_df.sort_values(
         by=['Plate_Barcode', 'Plate_ID', 'Well'], inplace=True)
 
-    # create updated library info file
-    output_file = FA_DIR / 'reduced_fa_analysis_summary.txt'
+    # create updated library info file with timestamp
+    timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
+    output_file = FA_DIR / f'reduced_fa_analysis_summary_{timestamp}.txt'
     reduced_fa_df.to_csv(output_file, sep='\t', index=False)
     
-    print(f"\nAnalysis complete. Output saved to: {output_file}")
-    print(f"Processed {len(reduced_fa_df)} samples from {len(fa_dest_plates)} FA plates")
+    print(f"\n✅ Analysis complete. Output saved to: {output_file}")
+    print(f"📊 Processed {len(reduced_fa_df)} samples from {len(fa_dest_plates)} FA plates")
     
-    # NEW: Archive FA results before creating success marker
+    # Step 3: Archive existing database and CSV files (following generate_lib_creation_files.py pattern)
+    print("\n📁 Archiving existing files...")
+    archive_database_file()
+    
+    # Step 4: Create new database with updated data (following generate_lib_creation_files.py pattern)
+    print("\n💾 Updating database with FA results...")
+    updated_master_df = update_database_with_fa_results(fa_summary_df, sample_metadata_df, individual_plates_df, master_plate_data_df)
+    
+    # Archive FA results after database update
     if fa_result_dirs_to_archive:
+        print("\n📦 Archiving FA result directories...")
         archive_fa_results(fa_result_dirs_to_archive, "capsule_fa_analysis_results")
     
-    # Create success marker for workflow manager integration
-    create_success_marker()
+    print(f"\n🎉 FA Analysis workflow completed successfully!")
+    print(f"📈 Database updated with FA results for {len(fa_summary_df)} wells")
+    
+    # # Create success marker for workflow manager integration
+    # create_success_marker()
 
 
 if __name__ == "__main__":
