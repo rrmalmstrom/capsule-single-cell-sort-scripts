@@ -379,22 +379,26 @@ def ensure_fa_tracking_columns():
     engine = create_engine(f'sqlite:///{sql_db_path}')
     
     try:
-        # Check if FA tracking columns exist
-        result = engine.execute("PRAGMA table_info(individual_plates)")
-        existing_columns = [row[1] for row in result]
-        
-        # Add missing columns
-        if 'fa_processing_status' not in existing_columns:
-            engine.execute("ALTER TABLE individual_plates ADD COLUMN fa_processing_status TEXT DEFAULT 'pending'")
-            print("✅ Added fa_processing_status column to individual_plates")
+        with engine.connect() as conn:
+            from sqlalchemy import text
+            result = conn.execute(text("PRAGMA table_info(individual_plates)"))
+            existing_columns = [row[1] for row in result]
             
-        if 'fa_processed_timestamp' not in existing_columns:
-            engine.execute("ALTER TABLE individual_plates ADD COLUMN fa_processed_timestamp TEXT")
-            print("✅ Added fa_processed_timestamp column to individual_plates")
-            
-        if 'fa_batch_id' not in existing_columns:
-            engine.execute("ALTER TABLE individual_plates ADD COLUMN fa_batch_id TEXT")
-            print("✅ Added fa_batch_id column to individual_plates")
+            # Add missing columns
+            if 'fa_processing_status' not in existing_columns:
+                conn.execute(text("ALTER TABLE individual_plates ADD COLUMN fa_processing_status TEXT DEFAULT 'pending'"))
+                conn.commit()
+                print("✅ Added fa_processing_status column to individual_plates")
+                
+            if 'fa_processed_timestamp' not in existing_columns:
+                conn.execute(text("ALTER TABLE individual_plates ADD COLUMN fa_processed_timestamp TEXT"))
+                conn.commit()
+                print("✅ Added fa_processed_timestamp column to individual_plates")
+                
+            if 'fa_batch_id' not in existing_columns:
+                conn.execute(text("ALTER TABLE individual_plates ADD COLUMN fa_batch_id TEXT"))
+                conn.commit()
+                print("✅ Added fa_batch_id column to individual_plates")
         
     except Exception as e:
         print(f"❌ Error adding FA tracking columns: {e}")
@@ -564,7 +568,15 @@ def addFAresults(my_prjct_dir, my_fa_df):
         SystemExit: If merge operation fails or changes row count
     """
     # create df from sqlite db
-    my_lib_df = readSQLdb()
+    full_master_df = readSQLdb()
+    
+    # CRITICAL FIX: Extract unique plate barcodes from the FA data (these are the NEW plates)
+    new_plate_barcodes = my_fa_df['FA_Plate_Barcode'].unique()
+    print(f"🔍 NEW plates being processed: {list(new_plate_barcodes)}")
+    
+    # Filter master_plate_data to ONLY include the NEW plates being processed
+    my_lib_df = full_master_df[full_master_df['Plate_Barcode'].isin(new_plate_barcodes)].copy()
+    print(f"📊 Filtered master_plate_data to {my_lib_df.shape[0]} rows for NEW plates only")
     
     # convert columns to string for consistent merging
     my_lib_df['Plate_ID'] = my_lib_df['Plate_ID'].astype(str)
@@ -658,16 +670,105 @@ def findPassFailLibs(my_lib_df, my_dest_plates):
         print('\nThe thresholds.txt file is missing needed values. Aborting\n\n')
         sys.exit()
 
-    # NEW: Merge thresholds using Plate_Barcode (destination plate barcode)
-    my_lib_df = my_lib_df.merge(thresh_df, how='left', left_on=[
-        'Plate_Barcode'], right_on=['Destination_plate'], suffixes=('', '_y'))
+    # FIXED: Smart merge strategy to handle incremental processing
+    # Check which columns already exist to avoid conflicts
+    existing_columns = set(my_lib_df.columns)
+    threshold_columns = set(thresh_df.columns)
+    
+    # Identify which plates need threshold data (those without existing threshold columns)
+    plates_needing_thresholds = []
+    if 'DNA_conc_threshold_(nmol/L)' not in existing_columns:
+        # No plates have threshold data yet - this is a fresh run
+        plates_needing_thresholds = my_lib_df['Plate_Barcode'].unique().tolist()
+    else:
+        # Some plates may already have threshold data - check which ones are missing
+        plates_with_thresholds = my_lib_df[my_lib_df['DNA_conc_threshold_(nmol/L)'].notna()]['Plate_Barcode'].unique()
+        all_plates = my_lib_df['Plate_Barcode'].unique()
+        plates_needing_thresholds = [p for p in all_plates if p not in plates_with_thresholds]
+    
+    if plates_needing_thresholds:
+        # Filter threshold data to only plates that need it
+        thresh_df_filtered = thresh_df[thresh_df['Destination_plate'].isin(plates_needing_thresholds)].copy()
+        
+        # Determine merge strategy based on existing columns
+        if 'DNA_conc_threshold_(nmol/L)' in existing_columns:
+            # Incremental merge - only update rows for new plates
+            # Create a mask for rows that need threshold updates
+            update_mask = my_lib_df['Plate_Barcode'].isin(plates_needing_thresholds)
+            
+            # Merge only the rows that need updates
+            rows_to_update = my_lib_df[update_mask].copy()
+            rows_to_keep = my_lib_df[~update_mask].copy()
+            
+            # Merge threshold data with rows that need updates
+            updated_rows = rows_to_update.merge(thresh_df_filtered, how='left',
+                                              left_on='Plate_Barcode', right_on='Destination_plate')
+            
+            # Combine updated rows with unchanged rows
+            my_lib_df = pd.concat([rows_to_keep, updated_rows], ignore_index=True)
+            
+        else:
+            # Fresh merge - no existing threshold columns
+            my_lib_df = my_lib_df.merge(thresh_df_filtered, how='left',
+                                      left_on='Plate_Barcode', right_on='Destination_plate')
     
     # Check for missing threshold data
-    missing_thresholds = my_lib_df[my_lib_df['dilution_factor'].isna()]
-    if len(missing_thresholds) > 0:
-        print(f"\n❌ ERROR: Missing threshold data for plates:")
-        print(missing_thresholds['Plate_Barcode'].unique())
+    if 'DNA_conc_threshold_(nmol/L)' in my_lib_df.columns:
+        missing_thresholds = my_lib_df[my_lib_df['DNA_conc_threshold_(nmol/L)'].isna()]
+        if len(missing_thresholds) > 0:
+            print(f"\n❌ ERROR: Missing threshold data for plates:")
+            print(missing_thresholds['Plate_Barcode'].unique())
+            sys.exit()
+    else:
+        print(f"\n❌ ERROR: No threshold data found in merged DataFrame")
         sys.exit()
+    
+    # Handle column name conflicts from merge - clean up suffixed columns
+    # Handle dilution_factor columns
+    if 'dilution_factor_y' in my_lib_df.columns:
+        # Use threshold dilution factor (from _y suffix)
+        my_lib_df['dilution_factor'] = my_lib_df['dilution_factor_y']
+        my_lib_df.drop(['dilution_factor_x', 'dilution_factor_y'], axis=1, inplace=True)
+    elif 'dilution_factor_x' in my_lib_df.columns:
+        # Use existing dilution factor (from _x suffix)
+        my_lib_df['dilution_factor'] = my_lib_df['dilution_factor_x']
+        my_lib_df.drop(['dilution_factor_x'], axis=1, inplace=True)
+    
+    # Handle ng/uL columns
+    if 'ng/uL_y' in my_lib_df.columns and 'ng/uL_x' in my_lib_df.columns:
+        # Use FA data (from _y suffix), fallback to existing (from _x suffix)
+        my_lib_df['ng/uL'] = my_lib_df['ng/uL_y'].fillna(my_lib_df['ng/uL_x'])
+        my_lib_df.drop(['ng/uL_x', 'ng/uL_y'], axis=1, inplace=True)
+    elif 'ng/uL_y' in my_lib_df.columns:
+        my_lib_df['ng/uL'] = my_lib_df['ng/uL_y']
+        my_lib_df.drop(['ng/uL_y'], axis=1, inplace=True)
+    elif 'ng/uL_x' in my_lib_df.columns:
+        my_lib_df['ng/uL'] = my_lib_df['ng/uL_x']
+        my_lib_df.drop(['ng/uL_x'], axis=1, inplace=True)
+    
+    # Handle nmole/L columns
+    if 'nmole/L_y' in my_lib_df.columns and 'nmole/L_x' in my_lib_df.columns:
+        # Use FA data (from _y suffix), fallback to existing (from _x suffix)
+        my_lib_df['nmole/L'] = my_lib_df['nmole/L_y'].fillna(my_lib_df['nmole/L_x'])
+        my_lib_df.drop(['nmole/L_x', 'nmole/L_y'], axis=1, inplace=True)
+    elif 'nmole/L_y' in my_lib_df.columns:
+        my_lib_df['nmole/L'] = my_lib_df['nmole/L_y']
+        my_lib_df.drop(['nmole/L_y'], axis=1, inplace=True)
+    elif 'nmole/L_x' in my_lib_df.columns:
+        my_lib_df['nmole/L'] = my_lib_df['nmole/L_x']
+        my_lib_df.drop(['nmole/L_x'], axis=1, inplace=True)
+    
+    # Handle Avg. Size columns
+    if 'Avg. Size_y' in my_lib_df.columns and 'Avg. Size_x' in my_lib_df.columns:
+        # Use FA data (from _y suffix), fallback to existing (from _x suffix)
+        my_lib_df['Avg. Size'] = my_lib_df['Avg. Size_y'].fillna(my_lib_df['Avg. Size_x'])
+        my_lib_df.drop(['Avg. Size_x', 'Avg. Size_y'], axis=1, inplace=True)
+    elif 'Avg. Size_y' in my_lib_df.columns:
+        my_lib_df['Avg. Size'] = my_lib_df['Avg. Size_y']
+        my_lib_df.drop(['Avg. Size_y'], axis=1, inplace=True)
+    elif 'Avg. Size_x' in my_lib_df.columns:
+        my_lib_df['Avg. Size'] = my_lib_df['Avg. Size_x']
+        my_lib_df.drop(['Avg. Size_x'], axis=1, inplace=True)
 
     # assign pass or fail to each lib based on dna conc and size thresholds
     my_lib_df['Passed_library'] = np.where(((my_lib_df['nmole/L'] > my_lib_df['DNA_conc_threshold_(nmol/L)']) & (
@@ -922,7 +1023,29 @@ def update_database_with_fa_results(fa_summary_df, sample_metadata_df, individua
                 if col not in updated_master_df.columns:
                     # Create new column if it doesn't exist
                     updated_master_df[col] = pd.NA
-                updated_master_df.loc[mask, col] = updated_master_df.loc[mask, fa_col]
+                
+                # Special handling for Redo_whole_plate to ensure consistent data type
+                if col == 'Redo_whole_plate':
+                    # First, standardize ALL existing values to string format
+                    existing_values = updated_master_df[col].copy()
+                    # Convert all existing values to consistent string format
+                    standardized_existing = existing_values.map({
+                        True: 'True', False: 'False',
+                        1: 'True', 0: 'False', 1.0: 'True', 0.0: 'False',
+                        '1': 'True', '0': 'False', 'True': 'True', 'False': 'False'
+                    })
+                    # Fill any unmapped values with 'False'
+                    standardized_existing = standardized_existing.fillna('False')
+                    updated_master_df[col] = standardized_existing
+                    
+                    # Now add the new FA values
+                    fa_values = updated_master_df.loc[mask, fa_col]
+                    # Convert new boolean values to string representation
+                    string_values = fa_values.map({True: 'True', False: 'False', 1: 'True', 0: 'False'})
+                    updated_master_df.loc[mask, col] = string_values
+                else:
+                    updated_master_df.loc[mask, col] = updated_master_df.loc[mask, fa_col]
+                
                 # Drop the temporary FA column
                 updated_master_df.drop(fa_col, axis=1, inplace=True)
             elif col not in updated_master_df.columns:
@@ -930,7 +1053,7 @@ def update_database_with_fa_results(fa_summary_df, sample_metadata_df, individua
                 if col == 'Failed_index_sets':
                     updated_master_df[col] = [[] for _ in range(len(updated_master_df))]
                 elif col == 'Redo_whole_plate':
-                    updated_master_df[col] = False
+                    updated_master_df[col] = 'False'  # Use string 'False' instead of boolean
                 else:
                     updated_master_df[col] = pd.NA
         
