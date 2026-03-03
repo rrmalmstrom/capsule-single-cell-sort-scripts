@@ -362,9 +362,6 @@ def addFAresults(my_prjct_dir, my_fa_df):
     
     expected_fa_count = expected_fa_samples_df.shape[0]
     
-    print(f"📊 Expected FA samples (excluding unused & controls): {expected_fa_count}")
-    print(f"📊 Actual FA samples (from smear analysis files): {my_fa_df.shape[0]}")
-
     # NEW: Merge using compound key (Plate_ID + Well) - INNER JOIN to only include FA-analyzed samples
     my_lib_df = my_lib_df.merge(
         my_fa_df,
@@ -386,6 +383,7 @@ def addFAresults(my_prjct_dir, my_fa_df):
         sys.exit()
     
     # NEW: Critical verification - ensure we have FA results for ALL expected samples
+    expected_fa_count = expected_fa_samples_df.shape[0]
     if my_lib_df.shape[0] != expected_fa_count:
         print(f"\n❌ ERROR: Missing FA results for some expected samples!")
         print(f"Expected samples with FA_Well data: {expected_fa_count}")
@@ -405,7 +403,6 @@ def addFAresults(my_prjct_dir, my_fa_df):
         
         sys.exit()
     
-    print(f"✅ Successfully merged {my_lib_df.shape[0]} FA-analyzed samples with master plate data")
     print(f"✅ All expected samples have FA results - no missing data detected")
 
     # get rid of unnecessary columns from FA parsing
@@ -484,7 +481,6 @@ def findPassFailLibs(my_lib_df, my_dest_plates):
         fa_samples = plate_data[plate_data['Type'] == 'sample'].copy()
         
         if len(fa_samples) == 0:
-            print(f"⚠️  No sample wells found for plate {plate_barcode}")
             continue
             
         print(f"📋 Analyzing plate {plate_barcode}: {len(fa_samples)} sample wells")
@@ -514,7 +510,6 @@ def findPassFailLibs(my_lib_df, my_dest_plates):
             # Mark index set as failed if >50% failure rate
             if failure_rate > 0.5:
                 failed_index_sets.append(index_set)
-                print(f"  ❌ {index_set} FAILED (>{50}% failure rate)")
         
         # Calculate overall failure rate for this plate
         total_failed = len(fa_samples[fa_samples['Passed_library'] == 0])
@@ -525,8 +520,6 @@ def findPassFailLibs(my_lib_df, my_dest_plates):
         
         # Determine if whole plate needs rework (>50% overall failure)
         plate_needs_rework = overall_failure_rate > 0.5
-        if plate_needs_rework:
-            print(f"  ❌ WHOLE PLATE REWORK REQUIRED (>{50}% overall failure)")
         
         # Apply results to ALL wells on this library plate (not just FA-analyzed ones)
         # This extrapolates FA results to the entire library plate
@@ -534,15 +527,98 @@ def findPassFailLibs(my_lib_df, my_dest_plates):
         failed_index_sets_str = str(failed_index_sets)
         my_lib_df.loc[plate_mask, 'Failed_index_sets'] = failed_index_sets_str
         my_lib_df.loc[plate_mask, 'Redo_whole_plate'] = plate_needs_rework
-        
-        print(f"  ✅ Applied results to {plate_mask.sum()} total wells on library plate")
-        
-        if failed_index_sets:
-            print(f"  📝 Failed index sets: {failed_index_sets}")
 
     return my_lib_df
 ##########################
 ##########################
+
+def archive_thresholds_file():
+    """
+    Archive the thresholds.txt file after processing by moving it to
+    previously_processed_threshold_files folder with timestamp suffix.
+    """
+    thresholds_file = FA_DIR / "thresholds.txt"
+    
+    if not thresholds_file.exists():
+        return
+    
+    # Create archive directory
+    archive_dir = FA_DIR / "previously_processed_threshold_files"
+    archive_dir.mkdir(exist_ok=True)
+    
+    # Create timestamped filename
+    timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
+    archived_filename = f"thresholds_{timestamp}.txt"
+    archived_path = archive_dir / archived_filename
+    
+    # Move the file
+    shutil.move(str(thresholds_file), str(archived_path))
+
+def generate_fa_summary_statistics(fa_summary_df):
+    """
+    Generate CSV summary statistics for library pass/fail results by plate and index set.
+    
+    Args:
+        fa_summary_df: DataFrame containing FA analysis results with all wells
+        
+    Returns:
+        DataFrame with summary statistics
+    """
+    summary_rows = []
+    
+    # Group by Plate_Barcode to analyze each FA plate separately
+    for plate_barcode in fa_summary_df['Plate_Barcode'].unique():
+        plate_data = fa_summary_df[fa_summary_df['Plate_Barcode'] == plate_barcode].copy()
+        
+        # Only analyze 'sample' type wells that were FA-analyzed
+        fa_samples = plate_data[plate_data['Type'] == 'sample'].copy()
+        
+        if len(fa_samples) == 0:
+            continue
+        
+        # Calculate plate-level summary (all samples)
+        total_samples = len(fa_samples)
+        passed_samples = len(fa_samples[fa_samples['Passed_library'] == 1])
+        pass_percentage = round((passed_samples / total_samples) * 100) if total_samples > 0 else 0
+        
+        summary_rows.append({
+            'Plate_Barcode': plate_barcode,
+            'Index_Set': 'All',
+            'Passed_Count': passed_samples,
+            'Total_Count': total_samples,
+            'Pass_Percentage': pass_percentage
+        })
+        
+        # Calculate index set summaries
+        for index_set in ['PE17', 'PE18', 'PE19', 'PE20']:
+            index_samples = fa_samples[fa_samples['Index_Set'] == index_set]
+            
+            if len(index_samples) == 0:
+                continue
+                
+            total_count = len(index_samples)
+            passed_count = len(index_samples[index_samples['Passed_library'] == 1])
+            pass_percentage = round((passed_count / total_count) * 100) if total_count > 0 else 0
+            
+            summary_rows.append({
+                'Plate_Barcode': plate_barcode,
+                'Index_Set': index_set,
+                'Passed_Count': passed_count,
+                'Total_Count': total_count,
+                'Pass_Percentage': pass_percentage
+            })
+    
+    # Create DataFrame from summary rows
+    summary_df = pd.DataFrame(summary_rows)
+    
+    # Sort by Plate_Barcode and Index_Set (with 'All' first for each plate)
+    summary_df['sort_order'] = summary_df['Index_Set'].map({
+        'All': 0, 'PE17': 1, 'PE18': 2, 'PE19': 3, 'PE20': 4
+    })
+    summary_df = summary_df.sort_values(['Plate_Barcode', 'sort_order']).drop('sort_order', axis=1)
+    
+    print(f"✅ Generated summary statistics for {len(summary_df)} entries")
+    return summary_df
 
 def archive_database_file():
     """
@@ -564,12 +640,9 @@ def archive_database_file():
         archive_path = archive_dir / archive_name
         
         shutil.move(str(db_path), str(archive_path))
-        print(f"✅ Archived database: {archive_name}")
         
         # Also archive master CSV file if it exists
         archive_master_csv_file()
-    else:
-        print("⚠️  No existing database file to archive")
 
 
 def archive_master_csv_file():
@@ -590,9 +663,6 @@ def archive_master_csv_file():
         archive_path = archive_dir / archive_name
         
         shutil.move(str(csv_path), str(archive_path))
-        print(f"✅ Archived master CSV: {archive_name}")
-    else:
-        print("⚠️  No existing master CSV file to archive")
 
 
 def update_database_with_fa_results(fa_summary_df, sample_metadata_df, individual_plates_df, master_plate_data_df):
@@ -606,8 +676,6 @@ def update_database_with_fa_results(fa_summary_df, sample_metadata_df, individua
         individual_plates_df: Existing individual plates (unchanged)
         master_plate_data_df: Existing master plate data to be updated with FA results
     """
-    print("📊 Creating updated database with FA analysis results...")
-    
     try:
         # Prepare FA results for merging - only keep FA-specific columns
         fa_columns_to_merge = ['Plate_ID', 'Well', 'dilution_factor', 'ng/uL', 'nmole/L', 'Avg. Size', 'Passed_library', 'Failed_index_sets', 'Redo_whole_plate']
@@ -645,10 +713,6 @@ def update_database_with_fa_results(fa_summary_df, sample_metadata_df, individua
                 else:
                     updated_master_df[col] = pd.NA
         
-        # Count how many wells were updated
-        fa_updated_count = len(fa_merge_df)
-        print(f"✅ Updated {fa_updated_count} wells with FA analysis results")
-        
         # Create new database with all three tables (following generate_lib_creation_files.py pattern)
         db_path = Path("project_summary.db")
         engine = create_engine(f'sqlite:///{db_path}')
@@ -663,15 +727,9 @@ def update_database_with_fa_results(fa_summary_df, sample_metadata_df, individua
         # Properly dispose of engine
         engine.dispose()
         
-        print(f"✅ Created updated database with 3 tables:")
-        print(f"  - sample_metadata: {len(sample_metadata_df)} records")
-        print(f"  - individual_plates: {len(individual_plates_df)} records")
-        print(f"  - master_plate_data: {len(updated_master_df)} records")
-        
         # Generate updated master CSV file
         output_filename = "library_dataframe.csv"
         updated_master_df.to_csv(output_filename, index=False)
-        print(f"✅ Generated updated master CSV: {output_filename}")
         
         return updated_master_df
         
@@ -697,11 +755,9 @@ def archive_fa_results(fa_result_dirs, archive_subdir_name):
             # Handle existing archives (prevent nesting)
             if dest_path.exists():
                 shutil.rmtree(dest_path)
-                # print(f"Removing existing archive: {result_dir.name}")
             
             # Copy directory to archive (preserves original)
             shutil.copytree(str(result_dir), str(dest_path))
-            print(f"Archived (copied): {result_dir.name}")
 
 def main():
     """
@@ -710,7 +766,6 @@ def main():
     print("Starting Capsule FA Analysis...")
     
     # Step 1: Read database tables FIRST (before archiving) - following generate_lib_creation_files.py pattern
-    print("📊 Reading existing database tables...")
     sql_db_path = Path("project_summary.db")
     if not sql_db_path.exists():
         print("❌ ERROR: project_summary.db not found")
@@ -723,11 +778,6 @@ def main():
         individual_plates_df = pd.read_sql('SELECT * FROM individual_plates', engine)
         master_plate_data_df = pd.read_sql('SELECT * FROM master_plate_data', engine)
         engine.dispose()
-        
-        print(f"✅ Read database tables:")
-        print(f"  - sample_metadata: {len(sample_metadata_df)} records")
-        print(f"  - individual_plates: {len(individual_plates_df)} records")
-        print(f"  - master_plate_data: {len(master_plate_data_df)} records")
         
     except Exception as e:
         print(f"❌ ERROR: Could not read database: {e}")
@@ -749,36 +799,26 @@ def main():
     # identify libs that passed/failed based on new index set failure logic
     fa_summary_df = findPassFailLibs(lib_df, fa_dest_plates)
 
-    # NEW: Create output with correct column names including Failed_index_sets
-    # Expected columns: Plate_ID, Well, Plate_Barcode, FA_Well, dilution_factor, ng/uL, nmole/L, Avg. Size, Passed_library, Failed_index_sets, Redo_whole_plate
-    reduced_fa_df = fa_summary_df[['Plate_ID', 'Well', 'Plate_Barcode', 'FA_Well', 'dilution_factor', 'ng/uL', 'nmole/L', 'Avg. Size', 'Passed_library', 'Failed_index_sets', 'Redo_whole_plate']].copy()
+    # Archive the thresholds file after processing
+    archive_thresholds_file()
 
-    reduced_fa_df.sort_values(
-        by=['Plate_Barcode', 'Plate_ID', 'Well'], inplace=True)
-
-    # create updated library info file with timestamp
-    timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
-    output_file = FA_DIR / f'reduced_fa_analysis_summary_{timestamp}.txt'
-    reduced_fa_df.to_csv(output_file, sep='\t', index=False)
+    # Generate FA summary statistics CSV
+    summary_stats_df = generate_fa_summary_statistics(fa_summary_df)
     
-    print(f"\n✅ Analysis complete. Output saved to: {output_file}")
-    print(f"📊 Processed {len(reduced_fa_df)} samples from {len(fa_dest_plates)} FA plates")
+    # Save summary statistics to CSV file with timestamp
+    timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
+    summary_output_file = FA_DIR / f'fa_summary_statistics_{timestamp}.csv'
+    summary_stats_df.to_csv(summary_output_file, index=False)
     
     # Step 3: Archive existing database and CSV files (following generate_lib_creation_files.py pattern)
-    print("\n📁 Archiving existing files...")
     archive_database_file()
     
     # Step 4: Create new database with updated data (following generate_lib_creation_files.py pattern)
-    print("\n💾 Updating database with FA results...")
     updated_master_df = update_database_with_fa_results(fa_summary_df, sample_metadata_df, individual_plates_df, master_plate_data_df)
     
     # Archive FA results after database update
     if fa_result_dirs_to_archive:
-        print("\n📦 Archiving FA result directories...")
         archive_fa_results(fa_result_dirs_to_archive, "capsule_fa_analysis_results")
-    
-    print(f"\n🎉 FA Analysis workflow completed successfully!")
-    print(f"📈 Database updated with FA results for {len(fa_summary_df)} wells")
     
     # # Create success marker for workflow manager integration
     # create_success_marker()
