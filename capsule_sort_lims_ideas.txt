@@ -1,8 +1,15 @@
+
+
+FA analysis now needs to be set up to be able to rerun when there are new plates added and rework been done
+
+
 Eventually need to relocate the standard_plate_layout.txt file when using teh workflow manager. It should be in. the same folder as the python scripts repo, not the project folder.
 
 Need to add successful completeion marker code to all scripts for workflow manager
 
 generate descriptive .md file for each script as well as a master overview for whole workflow.
+
+
 
 
 
