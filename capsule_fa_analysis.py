@@ -509,9 +509,10 @@ def print_fa_status_report(status):
     
     print("="*70 + "\n")
 
-def update_individual_plates_with_fa_status(processed_plate_barcodes, batch_id):
+def update_individual_plates_with_fa_status_sql(processed_plate_barcodes, batch_id):
     """
-    Update individual_plates table to mark plates as processed.
+    Update individual_plates table using SQL UPDATE statements (more efficient than table replacement).
+    Following the barcode script's incremental update pattern.
     
     Args:
         processed_plate_barcodes: List of plate barcodes that were successfully processed
@@ -524,20 +525,30 @@ def update_individual_plates_with_fa_status(processed_plate_barcodes, batch_id):
     engine = create_engine(f'sqlite:///{sql_db_path}')
     
     try:
-        # Read current individual_plates table
-        individual_plates_df = pd.read_sql('SELECT * FROM individual_plates', engine)
-        
-        # Update processing status for processed plates
         timestamp = datetime.now().isoformat()
         
-        for barcode in processed_plate_barcodes:
-            mask = individual_plates_df['barcode'] == barcode
-            individual_plates_df.loc[mask, 'fa_processing_status'] = 'processed'
-            individual_plates_df.loc[mask, 'fa_processed_timestamp'] = timestamp
-            individual_plates_df.loc[mask, 'fa_batch_id'] = batch_id
-        
-        # Write updated table back to database
-        individual_plates_df.to_sql('individual_plates', engine, if_exists='replace', index=False)
+        with engine.connect() as conn:
+            from sqlalchemy import text
+            
+            # Use SQL UPDATE for efficient in-place updates
+            for barcode in processed_plate_barcodes:
+                update_query = text("""
+                    UPDATE individual_plates
+                    SET fa_processing_status = :status,
+                        fa_processed_timestamp = :timestamp,
+                        fa_batch_id = :batch_id
+                    WHERE barcode = :barcode
+                """)
+                
+                conn.execute(update_query, {
+                    'status': 'processed',
+                    'timestamp': timestamp,
+                    'batch_id': batch_id,
+                    'barcode': barcode
+                })
+            
+            # Commit all updates
+            conn.commit()
         
         print(f"✅ Updated individual_plates table: marked {len(processed_plate_barcodes)} plates as processed")
         
@@ -546,6 +557,17 @@ def update_individual_plates_with_fa_status(processed_plate_barcodes, batch_id):
         raise
     finally:
         engine.dispose()
+
+def update_individual_plates_with_fa_status(processed_plate_barcodes, batch_id):
+    """
+    Update individual_plates table to mark plates as processed.
+    Uses SQL UPDATE approach for better performance.
+    
+    Args:
+        processed_plate_barcodes: List of plate barcodes that were successfully processed
+        batch_id: Batch ID for this processing run
+    """
+    return update_individual_plates_with_fa_status_sql(processed_plate_barcodes, batch_id)
 ##########################
 ##########################
 
@@ -944,8 +966,8 @@ def generate_fa_summary_statistics(fa_summary_df):
 
 def archive_database_file():
     """
-    Archive existing database file with timestamp suffix.
-    Follows the same archiving pattern as generate_lib_creation_files.py.
+    Archive existing database file with timestamp suffix by copying (not moving).
+    Follows the barcode script's copy-for-archive pattern for safer database handling.
     """
     db_path = Path("project_summary.db")
     
@@ -961,15 +983,14 @@ def archive_database_file():
         archive_name = f"{stem}_{timestamp}{suffix}"
         archive_path = archive_dir / archive_name
         
-        shutil.move(str(db_path), str(archive_path))
-        
-        # Also archive master CSV file if it exists
-        archive_master_csv_file()
+        # Copy instead of move to preserve original for in-place updates
+        shutil.copy2(str(db_path), str(archive_path))
+        print(f"📁 Archived database: {archive_path}")
 
 
 def archive_master_csv_file():
     """
-    Archive existing master DataFrame CSV file with timestamp suffix.
+    Archive existing master DataFrame CSV file with timestamp suffix by moving it.
     """
     csv_path = Path("library_dataframe.csv")
     
@@ -985,17 +1006,86 @@ def archive_master_csv_file():
         archive_path = archive_dir / archive_name
         
         shutil.move(str(csv_path), str(archive_path))
+        print(f"📁 Archived CSV: {archive_path}")
 
-
-def update_database_with_fa_results(fa_summary_df, sample_metadata_df, individual_plates_df, master_plate_data_df):
+def archive_plate_names_csv_file():
     """
-    Create updated database with existing tables plus FA analysis results.
-    Follows the same pattern as generate_lib_creation_files.py.
+    Archive existing plate_names.csv file with timestamp suffix.
+    """
+    csv_path = Path("plate_names.csv")
+    
+    if csv_path.exists():
+        timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
+        archive_dir = Path("archived_files")
+        archive_dir.mkdir(exist_ok=True)
+        
+        # Create archive name with timestamp suffix
+        stem = csv_path.stem  # "plate_names"
+        suffix = csv_path.suffix  # ".csv"
+        archive_name = f"{stem}_{timestamp}{suffix}"
+        archive_path = archive_dir / archive_name
+        
+        shutil.move(str(csv_path), str(archive_path))
+        print(f"📁 Archived CSV: {archive_path}")
+
+
+def generate_plate_names_csv_from_database():
+    """
+    Generate fresh plate_names.csv from updated individual_plates table.
+    """
+    try:
+        # Read individual_plates table from database
+        sql_db_path = Path("project_summary.db")
+        engine = create_engine(f'sqlite:///{sql_db_path}')
+        individual_plates_df = pd.read_sql('SELECT * FROM individual_plates', engine)
+        engine.dispose()
+        
+        # Select only the columns that should be in plate_names.csv
+        # (excluding FA tracking columns)
+        plate_names_columns = ['plate_name', 'project', 'sample', 'plate_number', 'is_custom', 'barcode', 'created_timestamp']
+        plate_names_df = individual_plates_df[plate_names_columns].copy()
+        
+        # Generate fresh plate_names.csv
+        output_filename = "plate_names.csv"
+        plate_names_df.to_csv(output_filename, index=False)
+        
+        print(f"✅ Generated fresh {output_filename} with {len(plate_names_df)} rows")
+        
+        return plate_names_df
+        
+    except Exception as e:
+        print(f"❌ ERROR: Could not generate plate_names.csv: {e}")
+        raise
+
+
+def generate_fresh_library_dataframe_csv(updated_master_df):
+    """
+    Generate fresh library_dataframe.csv from updated master_plate_data.
+    
+    Args:
+        updated_master_df: Updated master plate data DataFrame
+    """
+    try:
+        output_filename = "library_dataframe.csv"
+        updated_master_df.to_csv(output_filename, index=False)
+        print(f"✅ Generated fresh library_dataframe.csv with {len(updated_master_df)} rows")
+        
+    except Exception as e:
+        print(f"❌ Error generating library_dataframe.csv: {e}")
+        raise
+
+
+def update_database_with_fa_results_hybrid(fa_summary_df, sample_metadata_df, individual_plates_df, master_plate_data_df):
+    """
+    Hybrid database update approach:
+    - sample_metadata: No changes (never updated)
+    - individual_plates: Updated via SQL UPDATE (handled separately)
+    - master_plate_data: Complete table replacement (complex FA result merging)
     
     Args:
         fa_summary_df: DataFrame containing FA analysis results with all wells
         sample_metadata_df: Existing sample metadata (unchanged)
-        individual_plates_df: Existing individual plates (unchanged)
+        individual_plates_df: Existing individual plates (will be updated separately)
         master_plate_data_df: Existing master plate data to be updated with FA results
     """
     try:
@@ -1057,29 +1147,31 @@ def update_database_with_fa_results(fa_summary_df, sample_metadata_df, individua
                 else:
                     updated_master_df[col] = pd.NA
         
-        # Create new database with all three tables (following generate_lib_creation_files.py pattern)
+        # Hybrid approach: Only update tables that actually change
         db_path = Path("project_summary.db")
         engine = create_engine(f'sqlite:///{db_path}')
         
-        # Save existing tables (unchanged)
-        sample_metadata_df.to_sql('sample_metadata', engine, if_exists='replace', index=False)
-        individual_plates_df.to_sql('individual_plates', engine, if_exists='replace', index=False)
-        
-        # Add updated master DataFrame table
+        # sample_metadata: Never changes, skip update
+        # individual_plates: Updated separately via SQL UPDATE
+        # master_plate_data: Replace with updated data (complex merging)
         updated_master_df.to_sql('master_plate_data', engine, if_exists='replace', index=False)
         
         # Properly dispose of engine
         engine.dispose()
         
-        # Generate updated master CSV file
-        output_filename = "library_dataframe.csv"
-        updated_master_df.to_csv(output_filename, index=False)
+        print(f"✅ Updated master_plate_data table with FA results for {len(fa_summary_df['Plate_Barcode'].unique())} plates")
         
         return updated_master_df
         
     except Exception as e:
-        print(f"❌ FATAL ERROR: Could not create updated database: {e}")
+        print(f"❌ FATAL ERROR: Could not update database with FA results: {e}")
         sys.exit(1)
+
+def update_database_with_fa_results(fa_summary_df, sample_metadata_df, individual_plates_df, master_plate_data_df):
+    """
+    Update database with FA results using hybrid approach.
+    """
+    return update_database_with_fa_results_hybrid(fa_summary_df, sample_metadata_df, individual_plates_df, master_plate_data_df)
 
 
 def create_plate_visualization(fa_summary_df, output_dir):
@@ -1369,16 +1461,23 @@ def main():
     summary_output_file = FA_DIR / f'fa_summary_statistics_{timestamp}.csv'
     summary_stats_df.to_csv(summary_output_file, index=False)
     
-    # Step 5: Archive existing database and CSV files (following generate_lib_creation_files.py pattern)
+    # Step 5: Archive existing database (copy-for-archive strategy)
     archive_database_file()
     
-    # Step 6: Create new database with updated data (following generate_lib_creation_files.py pattern)
+    # Step 6: Update database using hybrid approach
+    # 6a: Update master_plate_data table (complex FA result merging)
     updated_master_df = update_database_with_fa_results(fa_summary_df, sample_metadata_df, individual_plates_df, master_plate_data_df)
     
-    # Step 7: Update individual_plates table to mark newly processed plates
+    # 6b: Update individual_plates table using SQL UPDATE (simple status changes)
     processed_plate_barcodes = [plate.replace('F', '') for plate in fa_dest_plates]
     batch_id = timestamp  # Use same timestamp for batch ID
     update_individual_plates_with_fa_status(processed_plate_barcodes, batch_id)
+    
+    # Step 7: Archive and regenerate CSV files
+    archive_master_csv_file()
+    archive_plate_names_csv_file()
+    generate_fresh_library_dataframe_csv(updated_master_df)
+    generate_plate_names_csv_from_database()
     
     # Step 8: Archive FA results with batch-specific timestamping
     if fa_result_dirs_to_archive:
