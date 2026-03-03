@@ -1526,7 +1526,6 @@ def main():
         for col in columns_to_remove:
             if col in new_master_df_cleaned.columns:
                 new_master_df_cleaned = new_master_df_cleaned.drop(col, axis=1)
-                print(f"  Removed column: {col}")
         
         # Clear index values for unused/ladder wells (same as existing)
         index_columns = ['Index_Set', 'Index_Well', 'Index_Name']
@@ -1537,7 +1536,6 @@ def main():
                 new_master_df_cleaned.loc[unused_ladder_mask, col] = pd.NA
         
         unused_count = unused_ladder_mask.sum()
-        print(f"  Cleared index values for {unused_count} unused/ladder wells")
         
         # Reorder columns to match existing DataFrame structure
         if 'Plate_Barcode' in new_master_df_cleaned.columns and 'FA_Well' in new_master_df_cleaned.columns:
@@ -1560,9 +1558,8 @@ def main():
                 cols.append('FA_Well')
             
             new_master_df_cleaned = new_master_df_cleaned[cols]
-            print(f"  Reordered columns to match existing structure")
         
-        # Validate that DataFrames can be concatenated
+        # Validate and fix DataFrame compatibility for concatenation
         # Validating DataFrame compatibility - no output needed
         existing_cols = set(existing_master_df.columns)
         new_cols = set(new_master_df_cleaned.columns)
@@ -1571,30 +1568,45 @@ def main():
             missing_in_existing = new_cols - existing_cols
             missing_in_new = existing_cols - new_cols
             
-            print(f"FATAL ERROR: DataFrame column structures do not match for concatenation")
-            print(f"Existing DataFrame columns: {sorted(existing_cols)}")
-            print(f"New DataFrame columns: {sorted(new_cols)}")
+            # Check for unexpected columns in new DataFrame
             if missing_in_existing:
-                print(f"Missing in existing: {sorted(missing_in_existing)}")
+                print(f"FATAL ERROR: New DataFrame has unexpected columns not found in existing DataFrame")
+                print(f"Existing DataFrame columns: {sorted(existing_cols)}")
+                print(f"New DataFrame columns: {sorted(new_cols)}")
+                print(f"Unexpected columns in new: {sorted(missing_in_existing)}")
+                print("This indicates a logic error in the script. New DataFrames should not have columns that existing DataFrames lack.")
+                sys.exit()
+            
+            # Handle missing columns in new DataFrame (expected scenario after FA analysis)
             if missing_in_new:
-                print(f"Missing in new: {sorted(missing_in_new)}")
-            print("Cannot safely append new data to existing master DataFrame.")
-            sys.exit()
+                # Add missing columns to new DataFrame with appropriate default values
+                for col in missing_in_new:
+                    if col in ['dilution_factor', 'ng/uL', 'nmole/L', 'Avg. Size']:
+                        # Numeric columns - use NaN
+                        new_master_df_cleaned[col] = pd.NA
+                    elif col in ['Passed_library', 'Redo_whole_plate']:
+                        # Boolean columns - use NaN (will be filled later)
+                        new_master_df_cleaned[col] = pd.NA
+                    elif col == 'Failed_index_sets':
+                        # List column - use string representation of empty list for SQLite compatibility
+                        new_master_df_cleaned[col] = '[]'
+                    else:
+                        # Other columns - use NaN
+                        new_master_df_cleaned[col] = pd.NA
         
-        # Verify column order matches
+        # Ensure column order matches existing DataFrame
         if list(existing_master_df.columns) != list(new_master_df_cleaned.columns):
-            print(f"FATAL ERROR: DataFrame column order does not match")
-            print(f"Existing order: {list(existing_master_df.columns)}")
-            print(f"New order: {list(new_master_df_cleaned.columns)}")
-            print("Cannot safely append new data to existing master DataFrame.")
-            sys.exit()
-        
-        print(f"✅ DataFrame structures validated - safe to concatenate")
-        print(f"  Columns match: {len(existing_cols)} columns in both DataFrames")
+            # Reorder new DataFrame columns to match existing DataFrame
+            new_master_df_cleaned = new_master_df_cleaned[existing_master_df.columns]
         
         # Safely append new data to existing master DataFrame
         try:
-            master_df = pd.concat([existing_master_df, new_master_df_cleaned], ignore_index=True)
+            # Use explicit dtype preservation to avoid FutureWarning about NA handling
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=FutureWarning, message=".*DataFrame concatenation.*")
+                master_df = pd.concat([existing_master_df, new_master_df_cleaned], ignore_index=True)
+            
             print(f"✅ Successfully appended new data:")
             print(f"  Existing: {len(existing_master_df)} wells")
             print(f"  New: {len(new_master_df_cleaned)} wells")
