@@ -284,6 +284,64 @@ def save_to_two_table_database(sample_metadata_df, individual_plates_df, db_path
         sys.exit()
 
 
+def save_to_database_smart(sample_metadata_df, new_plates_df, db_path, is_first_run, existing_sample_df=None):
+    """
+    Smart database save that only updates tables that actually need updating.
+    Preserves all unknown tables by only touching specific tables.
+    
+    Args:
+        sample_metadata_df (pd.DataFrame): Sample metadata DataFrame
+        new_plates_df (pd.DataFrame): NEW plates DataFrame (not all plates)
+        db_path (Path): Path to database file
+        is_first_run (bool): True for first runs, False for subsequent runs
+        existing_sample_df (pd.DataFrame, optional): Existing sample metadata for comparison
+        
+    Raises:
+        SystemExit: If database operation fails
+    """
+    try:
+        engine = create_engine(f'sqlite:///{db_path}')
+        
+        if is_first_run:
+            # First run: create both tables fresh
+            sample_metadata_df.to_sql('sample_metadata', engine, if_exists='replace', index=False)
+            new_plates_df.to_sql('individual_plates', engine, if_exists='replace', index=False)
+            print(f"✅ Created database: {len(sample_metadata_df)} samples, {len(new_plates_df)} plates")
+        else:
+            # Subsequent run: only update what actually changes
+            sample_updated = False
+            
+            # Check if sample metadata actually changed
+            if existing_sample_df is not None and sample_metadata_df.equals(existing_sample_df):
+                print("📋 Sample metadata unchanged - skipping update")
+            else:
+                # Sample metadata changed - update it
+                sample_metadata_df.to_sql('sample_metadata', engine, if_exists='replace', index=False)
+                sample_updated = True
+                print(f"📋 Updated sample metadata: {len(sample_metadata_df)} samples")
+            
+            # Always append new plates (this is the main purpose of subsequent runs)
+            if not new_plates_df.empty:
+                new_plates_df.to_sql('individual_plates', engine, if_exists='append', index=False)
+                print(f"➕ Appended new plates: {len(new_plates_df)} plates")
+            else:
+                print("📋 No new plates to add")
+            
+            # Summary
+            if sample_updated or not new_plates_df.empty:
+                print(f"✅ Database updated successfully")
+            else:
+                print("✅ Database checked - no updates needed")
+        
+        # Properly dispose of engine
+        engine.dispose()
+        
+    except Exception as e:
+        print(f"FATAL ERROR: Could not save to database {db_path}: {e}")
+        print("Laboratory automation requires reliable data storage for safety.")
+        sys.exit()
+
+
 def save_to_database(sample_metadata_df, individual_plates_df, db_path):
     """
     Save DataFrames to two-table SQLite database using SQLAlchemy.
@@ -867,7 +925,8 @@ def create_project_folder_structure():
 
 def archive_database_file(db_path, folders):
     """
-    Archive database file with timestamp as suffix.
+    Archive database file with timestamp as suffix by copying (not moving).
+    This preserves the original database for in-place updates.
     
     Args:
         db_path (Path): Path to database file to archive
@@ -887,8 +946,9 @@ def archive_database_file(db_path, folders):
     archive_name = f"{stem}_{timestamp}{suffix}"
     archive_path = archive_dir / archive_name
     
-    shutil.move(str(db_path), str(archive_path))
-    # Database archived
+    # Copy instead of move to preserve original for in-place updates
+    shutil.copy2(str(db_path), str(archive_path))
+    print(f"📁 Archived database copy: {archive_path}")
 
 
 def manage_bartender_file(bartender_file_path, folders):
@@ -1256,24 +1316,25 @@ def process_barcodes(plates_df, existing_plates_df):
     return plates_df, final_plates_df
 
 
-def finalize_files_and_database(sample_df, final_plates_df, new_plates_df, folders, is_first_run=True, custom_plates_processed=False, additional_plates_processed=False):
+def finalize_files_and_database(sample_df, final_plates_df, new_plates_df, folders, is_first_run=True, custom_plates_processed=False, additional_plates_processed=False, existing_sample_df=None):
     """
     Handle all file operations: archiving, saving, organizing.
     
     Args:
         sample_df (pd.DataFrame): Sample metadata
-        final_plates_df (pd.DataFrame): Final plates data
+        final_plates_df (pd.DataFrame): Final plates data (all plates combined)
         new_plates_df (pd.DataFrame): New plates added this run
         folders (dict): Dictionary with folder paths from create_project_folder_structure()
         is_first_run (bool): True for first runs, False for subsequent runs
         custom_plates_processed (bool): True if custom plates were processed this run
         additional_plates_processed (bool): True if additional standard plates were processed this run
+        existing_sample_df (pd.DataFrame, optional): Existing sample metadata for comparison
     """
-    # Archive existing database file
+    # Archive existing database file (copy, not move)
     archive_database_file(DATABASE_NAME, folders)
     
-    # Save to two-table database
-    save_to_two_table_database(sample_df, final_plates_df, DATABASE_NAME)
+    # Smart database save - only update what actually changes
+    save_to_database_smart(sample_df, new_plates_df, DATABASE_NAME, is_first_run, existing_sample_df)
     
     # Generate BarTender file with timestamp
     timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
@@ -1340,7 +1401,7 @@ def main():
     plates_df, final_plates_df = process_barcodes(plates_df, existing_plates_df)
     
     # Handle all file operations
-    finalize_files_and_database(sample_df, final_plates_df, plates_df, folders, is_first_run, custom_plates_processed, additional_plates_processed)
+    finalize_files_and_database(sample_df, final_plates_df, plates_df, folders, is_first_run, custom_plates_processed, additional_plates_processed, existing_sample_df)
     
     # Print completion summary
     print_completion_summary(sample_df, final_plates_df, plates_df)
