@@ -65,6 +65,11 @@ from sqlalchemy import create_engine
 import pandas as pd
 import numpy as np
 from datetime import datetime
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.patches import Rectangle
+import os
 
 
 # def create_success_marker():
@@ -738,6 +743,211 @@ def update_database_with_fa_results(fa_summary_df, sample_metadata_df, individua
         sys.exit(1)
 
 
+def create_plate_visualization(fa_summary_df, output_dir):
+    """
+    Create visual representation of plate pass/fail results as PDF.
+    
+    Args:
+        fa_summary_df: DataFrame containing FA analysis results with all wells
+        output_dir: Directory to save the PDF output
+        
+    Returns:
+        Path to the generated PDF file
+    """
+    print("🎨 Creating plate visualizations...")
+    
+    # Create output directory if it doesn't exist
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Get unique plates
+    plates = fa_summary_df['Plate_Barcode'].unique()
+    
+    # Create individual PDFs for each plate
+    individual_pdfs = []
+    
+    for plate_barcode in plates:
+        plate_data = fa_summary_df[fa_summary_df['Plate_Barcode'] == plate_barcode].copy()
+        
+        # Create individual PDF for this plate
+        pdf_path = output_dir / f"plate_visualization_{plate_barcode}.pdf"
+        individual_pdfs.append(pdf_path)
+        
+        with PdfPages(pdf_path) as pdf:
+            fig, ax = plt.subplots(figsize=(16, 12))
+            
+            # Set up the plate layout (384-well: 24 columns x 16 rows)
+            rows = 16  # A-P
+            cols = 24  # 1-24
+            well_size = 0.8
+            spacing = 1.0
+            
+            # Row labels A-P
+            row_labels = [chr(ord('A') + i) for i in range(rows)]
+            
+            # Create wells
+            for row in range(rows):
+                for col in range(cols):
+                    # Calculate position
+                    x = col * spacing
+                    y = (rows - 1 - row) * spacing  # Flip Y to have A at top
+                    
+                    # Find well data
+                    well_id = f"{row_labels[row]}{col + 1}"
+                    well_data = plate_data[plate_data['Well'] == well_id]
+                    
+                    # Determine colors and patterns
+                    if len(well_data) == 0:
+                        # No data for this well
+                        edge_color = 'lightgray'
+                        fill_color = 'lightgray'
+                        pattern = None
+                        well_type = 'no_data'
+                    else:
+                        well_info = well_data.iloc[0]
+                        well_type = well_info.get('Type', 'unknown')
+                        
+                        # Edge color based on type
+                        if well_type == 'sample':
+                            edge_color = 'green'
+                        elif well_type == 'neg_cntrl':
+                            edge_color = 'red'
+                        elif well_type == 'pos_cntrl':
+                            edge_color = 'blue'
+                        elif well_type == 'unused':
+                            edge_color = 'gray'
+                        else:
+                            edge_color = 'black'
+                        
+                        # Fill color and pattern based on pass/fail
+                        if well_type == 'unused' or pd.isna(well_info.get('Passed_library')):
+                            fill_color = 'lightgray'
+                            pattern = None
+                        elif well_info.get('Passed_library') == 1:
+                            fill_color = 'lightgreen'
+                            pattern = '///'  # Diagonal lines for pass
+                        else:
+                            fill_color = 'lightcoral'
+                            pattern = 'xx'  # X pattern for fail
+                    
+                    # Create circle for well
+                    circle = plt.Circle((x, y), well_size/2,
+                                      facecolor=fill_color,
+                                      edgecolor=edge_color,
+                                      linewidth=2,
+                                      hatch=pattern)
+                    ax.add_patch(circle)
+            
+            # Add row labels (A-P)
+            for i, label in enumerate(row_labels):
+                ax.text(-1.5, (rows - 1 - i) * spacing, label,
+                       fontsize=12, ha='center', va='center', fontweight='bold')
+            
+            # Add column labels (1-24)
+            for i in range(cols):
+                ax.text(i * spacing, rows * spacing + 0.5, str(i + 1),
+                       fontsize=10, ha='center', va='center', fontweight='bold')
+            
+            # Set axis properties
+            ax.set_xlim(-2, cols * spacing)
+            ax.set_ylim(-1, rows * spacing + 1)
+            ax.set_aspect('equal')
+            ax.axis('off')
+            
+            # Add title
+            ax.set_title(f'Plate {plate_barcode} - FA Pass/Fail Results',
+                        fontsize=16, fontweight='bold', pad=20)
+            
+            # Create legend - Section 1: Well Types (Border Colors)
+            type_legend_elements = [
+                plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='white',
+                          markersize=15, markeredgecolor='green', markeredgewidth=3,
+                          label='Sample', linestyle='None'),
+                plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='white',
+                          markersize=15, markeredgecolor='red', markeredgewidth=3,
+                          label='Negative Control', linestyle='None'),
+                plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='white',
+                          markersize=15, markeredgecolor='blue', markeredgewidth=3,
+                          label='Positive Control', linestyle='None'),
+                plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='white',
+                          markersize=15, markeredgecolor='gray', markeredgewidth=3,
+                          label='Unused', linestyle='None')
+            ]
+            
+            # Create legend - Section 2: Pass/Fail Results (Fill Colors & Patterns)
+            result_legend_elements = [
+                plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='lightgreen',
+                          markersize=15, markeredgecolor='none', markeredgewidth=0,
+                          label='Pass (/// pattern)', linestyle='None'),
+                plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='lightcoral',
+                          markersize=15, markeredgecolor='none', markeredgewidth=0,
+                          label='Fail (XX pattern)', linestyle='None'),
+                plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='lightgray',
+                          markersize=15, markeredgecolor='none', markeredgewidth=0,
+                          label='No Data/Unused', linestyle='None')
+            ]
+            
+            # Add first legend for well types
+            type_legend = ax.legend(handles=type_legend_elements, loc='center left',
+                                   bbox_to_anchor=(1, 0.75), title='Well Types (Border Color)',
+                                   title_fontsize=12, fontsize=10, handletextpad=1.0,
+                                   borderpad=1.2, labelspacing=0.8)
+            
+            # Add second legend for pass/fail results
+            result_legend = ax.legend(handles=result_legend_elements, loc='center left',
+                                     bbox_to_anchor=(1, 0.25), title='Pass/Fail Results (Fill Color)',
+                                     title_fontsize=12, fontsize=10, handletextpad=1.0,
+                                     borderpad=1.2, labelspacing=0.8)
+            
+            # Add the first legend back (matplotlib removes it when adding the second)
+            ax.add_artist(type_legend)
+            
+            plt.tight_layout()
+            pdf.savefig(fig, bbox_inches='tight')
+            plt.close(fig)
+        
+        pass  # Removed verbose output
+    
+    # Merge all individual PDFs into one with timestamp
+    timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
+    merged_pdf_path = output_dir / f"FA_plate_visualizations_combined_{timestamp}.pdf"
+    
+    try:
+        from PyPDF2 import PdfMerger
+        
+        merger = PdfMerger()
+        for pdf_path in individual_pdfs:
+            if pdf_path.exists():
+                merger.append(str(pdf_path))
+        
+        with open(merged_pdf_path, 'wb') as output_file:
+            merger.write(output_file)
+        merger.close()
+        
+        # Clean up individual PDFs
+        for pdf_path in individual_pdfs:
+            if pdf_path.exists():
+                pdf_path.unlink()
+        
+        pass  # Removed verbose output
+        
+    except ImportError:
+        print("⚠️  PyPDF2 not available - keeping individual PDF files")
+        merged_pdf_path = None
+    
+    return merged_pdf_path if merged_pdf_path and merged_pdf_path.exists() else individual_pdfs[0] if individual_pdfs else None
+
+
+def cleanup_temporary_csv_files(fa_files):
+    """Remove temporary CSV files that were copied to FA_DIR for processing"""
+    for csv_file in fa_files:
+        temp_file_path = FA_DIR / csv_file
+        if temp_file_path.exists():
+            try:
+                temp_file_path.unlink()
+            except Exception as e:
+                print(f"Warning: Could not remove temporary file {csv_file}: {e}")
+
 def archive_fa_results(fa_result_dirs, archive_subdir_name):
     """Archive FA result directories to permanent storage by copying them"""
     if not fa_result_dirs:
@@ -819,6 +1029,16 @@ def main():
     # Archive FA results after database update
     if fa_result_dirs_to_archive:
         archive_fa_results(fa_result_dirs_to_archive, "capsule_fa_analysis_results")
+    
+    # Generate plate visualizations
+    try:
+        visualization_pdf = create_plate_visualization(fa_summary_df, FA_DIR)
+    except Exception as e:
+        print(f"❌ ERROR: Could not create plate visualizations: {e}")
+        print("Continuing without visualizations...")
+    
+    # Clean up temporary CSV files
+    cleanup_temporary_csv_files(fa_files)
     
     # # Create success marker for workflow manager integration
     # create_success_marker()
