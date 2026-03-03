@@ -131,12 +131,14 @@ def compareFolderFileNames(folder_path, file, folder_name):
 
 ##########################
 ##########################
-def getFAfiles(fa_dir):
+def getFAfiles(fa_dir, processed_plates=None):
     """
     Scan directories for FA output files and copy them to the working directory.
+    Only processes plates that haven't been processed before.
     
     Args:
         fa_dir: Path to the FA analysis directory
+        processed_plates: Set of plate barcodes that have already been processed
         
     Returns:
         Tuple of (List of FA file names that were processed, List of FA result directories for archiving)
@@ -144,8 +146,12 @@ def getFAfiles(fa_dir):
     Raises:
         SystemExit: If no FA files are found
     """
+    if processed_plates is None:
+        processed_plates = set()
+    
     fa_files = []
-    fa_result_dirs_to_archive = []  # NEW: Track directories for archiving
+    fa_result_dirs_to_archive = []  # Track directories for archiving
+    skipped_files = []  # Track skipped files for reporting
     
     for direct in fa_dir.iterdir():
         if direct.is_dir():
@@ -162,6 +168,14 @@ def getFAfiles(fa_dir):
                     folder_name = fa.name
                     folder_name = folder_name.split(' ')[0]
                     
+                    # Extract plate barcode (remove 'F' suffix if present)
+                    plate_barcode = folder_name.replace('F', '')
+                    
+                    # Skip if this plate has already been processed
+                    if plate_barcode in processed_plates:
+                        skipped_files.append(folder_name)
+                        continue
+                    
                     # search for smear analysis files in each subdirectory
                     for file_path in fa.iterdir():
                         if file_path.name.endswith('Smear Analysis Result.csv'):
@@ -175,13 +189,20 @@ def getFAfiles(fa_dir):
                             # add folder name (aka FA plate name) to list
                             fa_files.append(f'{folder_name}.csv')
                             
-                            # NEW: Track this directory for archiving
+                            # Track this directory for archiving
                             fa_result_dirs_to_archive.append(fa)
     
 
-    # quit script if directory doesn't contain FA .csv files
+    # Report on skipped files
+    if skipped_files:
+        print(f"\n⏭️  Skipped {len(skipped_files)} already processed plates: {sorted(skipped_files)}")
+
+    # quit script if directory doesn't contain NEW FA .csv files
     if len(fa_files) == 0:
-        print("\n\nDid not find any FA output files. Aborting program\n\n")
+        if skipped_files:
+            print(f"\n✅ No new FA files to process. All {len(skipped_files)} available plates have already been processed.")
+        else:
+            print("\n\nDid not find any FA output files. Aborting program\n\n")
         sys.exit()
     
     # return both lists
@@ -326,6 +347,201 @@ def readSQLdb():
     engine.dispose()
 
     return sql_df
+
+def readIndividualPlatesTable():
+    """
+    Read individual plates table from SQLite database.
+    
+    Returns:
+        DataFrame containing individual plates data
+    """
+    # path to sqlite db project_summary.db
+    sql_db_path = PROJECT_DIR / 'project_summary.db'
+
+    # create sqlalchemy engine
+    engine = create_engine(f'sqlite:///{sql_db_path}')
+
+    # define sql query
+    query = "SELECT * FROM individual_plates"
+    
+    # import sql db into pandas df
+    individual_plates_df = pd.read_sql(query, engine)
+    
+    engine.dispose()
+
+    return individual_plates_df
+
+def ensure_fa_tracking_columns():
+    """
+    Add FA tracking columns to individual_plates table if they don't exist.
+    """
+    sql_db_path = PROJECT_DIR / 'project_summary.db'
+    engine = create_engine(f'sqlite:///{sql_db_path}')
+    
+    try:
+        # Check if FA tracking columns exist
+        result = engine.execute("PRAGMA table_info(individual_plates)")
+        existing_columns = [row[1] for row in result]
+        
+        # Add missing columns
+        if 'fa_processing_status' not in existing_columns:
+            engine.execute("ALTER TABLE individual_plates ADD COLUMN fa_processing_status TEXT DEFAULT 'pending'")
+            print("✅ Added fa_processing_status column to individual_plates")
+            
+        if 'fa_processed_timestamp' not in existing_columns:
+            engine.execute("ALTER TABLE individual_plates ADD COLUMN fa_processed_timestamp TEXT")
+            print("✅ Added fa_processed_timestamp column to individual_plates")
+            
+        if 'fa_batch_id' not in existing_columns:
+            engine.execute("ALTER TABLE individual_plates ADD COLUMN fa_batch_id TEXT")
+            print("✅ Added fa_batch_id column to individual_plates")
+        
+    except Exception as e:
+        print(f"❌ Error adding FA tracking columns: {e}")
+        raise
+    finally:
+        engine.dispose()
+
+def get_processed_plates():
+    """
+    Identify plates that have already been processed through FA analysis.
+    Uses individual_plates table as single source of truth.
+    
+    Returns:
+        set: Set of plate barcodes that have been processed
+    """
+    try:
+        individual_plates_df = readIndividualPlatesTable()
+        
+        # Check if fa_processing_status column exists
+        if 'fa_processing_status' in individual_plates_df.columns:
+            # Use explicit tracking column
+            processed_plates = set(
+                individual_plates_df[
+                    individual_plates_df['fa_processing_status'] == 'processed'
+                ]['barcode'].tolist()
+            )
+        else:
+            # Fallback: no plates processed yet (first run scenario)
+            processed_plates = set()
+        
+        return processed_plates
+        
+    except Exception as e:
+        print(f"⚠️  Warning: Could not read individual_plates table: {e}")
+        print("Assuming first run - no plates processed yet")
+        return set()
+
+def analyze_fa_processing_status():
+    """
+    Analyze FA processing status for all plates.
+    
+    Returns:
+        dict: Processing status information
+    """
+    master_df = readSQLdb()
+    
+    # Get all plates with FA wells assigned (scheduled for FA)
+    scheduled_mask = master_df['FA_Well'].notna()
+    scheduled_plates = set(master_df[scheduled_mask]['Plate_Barcode'].unique())
+    
+    # Get processed plates from individual_plates table
+    processed_plates = get_processed_plates()
+    
+    # Calculate pending plates
+    pending_plates = scheduled_plates - processed_plates
+    
+    # Get available FA files
+    try:
+        available_fa_files, _ = getFAfiles(FA_DIR)
+        available_plates = set()
+        for fa_file in available_fa_files:
+            # Extract plate barcode from filename (remove .csv and F suffix)
+            plate_barcode = fa_file.replace('.csv', '').replace('F', '')
+            available_plates.add(plate_barcode)
+    except SystemExit:
+        # getFAfiles exits if no files found, catch this
+        available_fa_files = []
+        available_plates = set()
+    
+    # Plates ready to process (pending + has FA file available)
+    ready_to_process = pending_plates & available_plates
+    
+    # Plates missing FA files
+    missing_fa_files = pending_plates - available_plates
+    
+    return {
+        'scheduled_plates': scheduled_plates,
+        'processed_plates': processed_plates,
+        'pending_plates': pending_plates,
+        'available_plates': available_plates,
+        'ready_to_process': ready_to_process,
+        'missing_fa_files': missing_fa_files,
+        'available_fa_files': available_fa_files
+    }
+
+def print_fa_status_report(status):
+    """
+    Print user-friendly FA processing status report.
+    """
+    print("\n" + "="*70)
+    print("📊 FA PROCESSING STATUS REPORT")
+    print("="*70)
+    print(f"📋 Total plates scheduled for FA: {len(status['scheduled_plates'])}")
+    print(f"✅ Already processed: {len(status['processed_plates'])}")
+    print(f"⏳ Pending processing: {len(status['pending_plates'])}")
+    print(f"🆕 Ready to process now: {len(status['ready_to_process'])}")
+    print(f"❌ Missing FA files: {len(status['missing_fa_files'])}")
+    print(f"📁 Available FA files: {len(status['available_fa_files'])}")
+    
+    if status['ready_to_process']:
+        print(f"\n🔬 Will process these plates: {sorted(list(status['ready_to_process']))}")
+    
+    if status['missing_fa_files']:
+        print(f"\n⚠️  Waiting for FA files for: {sorted(list(status['missing_fa_files']))}")
+    
+    if status['processed_plates']:
+        print(f"\n✅ Previously processed: {sorted(list(status['processed_plates']))}")
+    
+    print("="*70 + "\n")
+
+def update_individual_plates_with_fa_status(processed_plate_barcodes, batch_id):
+    """
+    Update individual_plates table to mark plates as processed.
+    
+    Args:
+        processed_plate_barcodes: List of plate barcodes that were successfully processed
+        batch_id: Batch ID for this processing run
+    """
+    if not processed_plate_barcodes:
+        return
+    
+    sql_db_path = PROJECT_DIR / 'project_summary.db'
+    engine = create_engine(f'sqlite:///{sql_db_path}')
+    
+    try:
+        # Read current individual_plates table
+        individual_plates_df = pd.read_sql('SELECT * FROM individual_plates', engine)
+        
+        # Update processing status for processed plates
+        timestamp = datetime.now().isoformat()
+        
+        for barcode in processed_plate_barcodes:
+            mask = individual_plates_df['barcode'] == barcode
+            individual_plates_df.loc[mask, 'fa_processing_status'] = 'processed'
+            individual_plates_df.loc[mask, 'fa_processed_timestamp'] = timestamp
+            individual_plates_df.loc[mask, 'fa_batch_id'] = batch_id
+        
+        # Write updated table back to database
+        individual_plates_df.to_sql('individual_plates', engine, if_exists='replace', index=False)
+        
+        print(f"✅ Updated individual_plates table: marked {len(processed_plate_barcodes)} plates as processed")
+        
+    except Exception as e:
+        print(f"❌ Error updating individual_plates table: {e}")
+        raise
+    finally:
+        engine.dispose()
 ##########################
 ##########################
 
@@ -948,30 +1164,32 @@ def cleanup_temporary_csv_files(fa_files):
             except Exception as e:
                 print(f"Warning: Could not remove temporary file {csv_file}: {e}")
 
-def archive_fa_results(fa_result_dirs, archive_subdir_name):
-    """Archive FA result directories to permanent storage by copying them"""
+def archive_fa_results(fa_result_dirs, archive_subdir_name, batch_id=None):
+    """Archive FA result directories to permanent storage by copying them with batch-specific timestamping"""
     if not fa_result_dirs:
         return
     
-    # Create archive directory
+    # Create batch-specific archive directory with timestamp
+    if batch_id is None:
+        batch_id = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
+    
     archive_base = PROJECT_DIR / "archived_files"
-    archive_dir = archive_base / archive_subdir_name
+    archive_dir = archive_base / archive_subdir_name / f"batch_{batch_id}"
     archive_dir.mkdir(parents=True, exist_ok=True)
+    
+    print(f"📁 Archiving {len(fa_result_dirs)} FA result directories to batch_{batch_id}")
     
     for result_dir in fa_result_dirs:
         if result_dir.exists():
             dest_path = archive_dir / result_dir.name
             
-            # Handle existing archives (prevent nesting)
-            if dest_path.exists():
-                shutil.rmtree(dest_path)
-            
-            # Copy directory to archive (preserves original)
+            # Copy directory to archive (no overwrite risk since each batch gets its own folder)
             shutil.copytree(str(result_dir), str(dest_path))
+            print(f"   ✅ Archived: {result_dir.name}")
 
 def main():
     """
-    Main function to orchestrate the FA analysis workflow.
+    Main function to orchestrate the incremental FA analysis workflow.
     """
     print("Starting Capsule FA Analysis...")
     
@@ -993,8 +1211,16 @@ def main():
         print(f"❌ ERROR: Could not read database: {e}")
         sys.exit()
     
-    # Step 2: Get FA files and process them
-    fa_files, fa_result_dirs_to_archive = getFAfiles(FA_DIR)
+    # Step 2: Ensure FA tracking columns exist in individual_plates table
+    ensure_fa_tracking_columns()
+    
+    # Step 3: Analyze FA processing status
+    status = analyze_fa_processing_status()
+    print_fa_status_report(status)
+    
+    # Step 4: Get FA files for ONLY unprocessed plates
+    processed_plates = get_processed_plates()
+    fa_files, fa_result_dirs_to_archive = getFAfiles(FA_DIR, processed_plates)
 
     # get dictionary where keys are FA file names and values are df's created from FA files
     # and get a list of destination/lib plate IDs processed
@@ -1012,7 +1238,7 @@ def main():
     # Archive the thresholds file after processing
     archive_thresholds_file()
 
-    # Generate FA summary statistics CSV
+    # Generate FA summary statistics CSV (only for newly processed plates)
     summary_stats_df = generate_fa_summary_statistics(fa_summary_df)
     
     # Save summary statistics to CSV file with timestamp
@@ -1020,25 +1246,34 @@ def main():
     summary_output_file = FA_DIR / f'fa_summary_statistics_{timestamp}.csv'
     summary_stats_df.to_csv(summary_output_file, index=False)
     
-    # Step 3: Archive existing database and CSV files (following generate_lib_creation_files.py pattern)
+    # Step 5: Archive existing database and CSV files (following generate_lib_creation_files.py pattern)
     archive_database_file()
     
-    # Step 4: Create new database with updated data (following generate_lib_creation_files.py pattern)
+    # Step 6: Create new database with updated data (following generate_lib_creation_files.py pattern)
     updated_master_df = update_database_with_fa_results(fa_summary_df, sample_metadata_df, individual_plates_df, master_plate_data_df)
     
-    # Archive FA results after database update
-    if fa_result_dirs_to_archive:
-        archive_fa_results(fa_result_dirs_to_archive, "capsule_fa_analysis_results")
+    # Step 7: Update individual_plates table to mark newly processed plates
+    processed_plate_barcodes = [plate.replace('F', '') for plate in fa_dest_plates]
+    batch_id = timestamp  # Use same timestamp for batch ID
+    update_individual_plates_with_fa_status(processed_plate_barcodes, batch_id)
     
-    # Generate plate visualizations
+    # Step 8: Archive FA results with batch-specific timestamping
+    if fa_result_dirs_to_archive:
+        archive_fa_results(fa_result_dirs_to_archive, "capsule_fa_analysis_results", batch_id)
+    
+    # Step 9: Generate plate visualizations (only for newly processed plates)
     try:
         visualization_pdf = create_plate_visualization(fa_summary_df, FA_DIR)
     except Exception as e:
         print(f"❌ ERROR: Could not create plate visualizations: {e}")
         print("Continuing without visualizations...")
     
-    # Clean up temporary CSV files
+    # Step 10: Clean up temporary CSV files
     cleanup_temporary_csv_files(fa_files)
+    
+    print(f"\n🎉 FA Analysis completed successfully!")
+    print(f"📊 Processed {len(fa_dest_plates)} plates in batch {batch_id}")
+    print(f"✅ {len(status['processed_plates']) + len(fa_dest_plates)} total plates now have FA results")
     
     # # Create success marker for workflow manager integration
     # create_success_marker()
