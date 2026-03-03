@@ -313,25 +313,19 @@ def save_to_database_smart(sample_metadata_df, new_plates_df, db_path, is_first_
             
             # Check if sample metadata actually changed
             if existing_sample_df is not None and sample_metadata_df.equals(existing_sample_df):
-                print("📋 Sample metadata unchanged - skipping update")
+                # Sample metadata unchanged - skip update
+                pass
             else:
                 # Sample metadata changed - update it
                 sample_metadata_df.to_sql('sample_metadata', engine, if_exists='replace', index=False)
                 sample_updated = True
-                print(f"📋 Updated sample metadata: {len(sample_metadata_df)} samples")
             
             # Always append new plates (this is the main purpose of subsequent runs)
             if not new_plates_df.empty:
                 new_plates_df.to_sql('individual_plates', engine, if_exists='append', index=False)
-                print(f"➕ Appended new plates: {len(new_plates_df)} plates")
-            else:
-                print("📋 No new plates to add")
             
             # Summary
-            if sample_updated or not new_plates_df.empty:
-                print(f"✅ Database updated successfully")
-            else:
-                print("✅ Database checked - no updates needed")
+            print(f"\n✅ Database updated successfully")
         
         # Properly dispose of engine
         engine.dispose()
@@ -384,7 +378,7 @@ def read_from_two_table_database(db_path):
                 individual_plates_df = pd.read_sql('SELECT * FROM individual_plates', conn)
                 engine.dispose()
                 
-                print(f"✅ Read {len(sample_metadata_df)} samples and {len(individual_plates_df)} plates from database: {db_path}")
+                # Database read successfully
                 return sample_metadata_df, individual_plates_df
                 
             except Exception:
@@ -458,8 +452,7 @@ def make_bartender_file(df, output_path):
             # Add proper trailing empty lines for BarTender compatibility
             f.write('\r\n')
         
-        print(f"✅ Created BarTender file: {output_path}")
-        print(f"   {len(df)} plates included")
+        # BarTender file created silently
         
     except Exception as e:
         print(f"FATAL ERROR: Could not create BarTender file {output_path}: {e}")
@@ -859,19 +852,32 @@ def create_project_folder_structure():
             'archived_files': Path("archived_files"),
         }
         
+        # Track which folders were actually created
+        created_folders = []
+        
         # Create main folders
         for folder_name, folder_path in folders.items():
+            if not folder_path.exists():
+                created_folders.append(str(folder_path))
             folder_path.mkdir(exist_ok=True)
         
         # Create subfolder structure for barcode labels
         bartender_dir = folders['make_barcode_labels'] / "bartender_barcode_labels"
+        if not bartender_dir.exists():
+            created_folders.append(str(bartender_dir))
         bartender_dir.mkdir(exist_ok=True)
         
         label_input_dir = folders['make_barcode_labels'] / "previously_process_label_input_files"
+        if not label_input_dir.exists():
+            created_folders.append(str(label_input_dir))
         label_input_dir.mkdir(exist_ok=True)
         
         custom_plates_dir = label_input_dir / "custom_plates"
         standard_plates_dir = label_input_dir / "standard_plates"
+        if not custom_plates_dir.exists():
+            created_folders.append(str(custom_plates_dir))
+        if not standard_plates_dir.exists():
+            created_folders.append(str(standard_plates_dir))
         custom_plates_dir.mkdir(exist_ok=True)
         standard_plates_dir.mkdir(exist_ok=True)
         
@@ -881,15 +887,9 @@ def create_project_folder_structure():
         folders['custom_plates'] = custom_plates_dir
         folders['standard_plates'] = standard_plates_dir
         
-        print("✅ Created project folder structure:")
-        print(f"   - {folders['make_barcode_labels']}/")
-        print(f"     - {folders['bartender_labels']}/")
-        print(f"     - {folders['label_input_files']}/")
-        print(f"       - {folders['custom_plates']}/")
-        print(f"       - {folders['standard_plates']}/")
-        print(f"   - {folders['library_creation']}/")
-        print(f"   - {folders['fa_analysis']}/")
-        print(f"   - {folders['archived_files']}/")
+        # Only print if folders were actually created
+        if created_folders:
+            print(f"✅ Created {len(created_folders)} new project folders")
         
         return folders
         
@@ -948,7 +948,7 @@ def archive_database_file(db_path, folders):
     
     # Copy instead of move to preserve original for in-place updates
     shutil.copy2(str(db_path), str(archive_path))
-    print(f"📁 Archived database copy: {archive_path}")
+    # Database archived silently
 
 
 def manage_bartender_file(bartender_file_path, folders):
@@ -1008,7 +1008,7 @@ def manage_input_files(folders, is_first_run=True, custom_plates_processed=False
                 destination = folders['custom_plates'] / timestamped_name
                 shutil.move(str(custom_file), str(destination))
                 moved_files.append(str(destination))
-                print(f"📁 Moved: {custom_file} → {destination}")
+                # File moved silently
     
     # Move additional standard plate files with timestamp (only if they were processed)
     if additional_plates_processed:
@@ -1022,10 +1022,9 @@ def manage_input_files(folders, is_first_run=True, custom_plates_processed=False
                 destination = folders['standard_plates'] / timestamped_name
                 shutil.move(str(standard_file), str(destination))
                 moved_files.append(str(destination))
-                print(f"📁 Moved: {standard_file} → {destination}")
+                # File moved silently
     
-    if moved_files:
-        print(f"✅ Organized {len(moved_files)} input files with timestamps")
+    # Input files organized silently
     
     return moved_files
 
@@ -1233,8 +1232,7 @@ def process_subsequent_run(existing_sample_df, existing_plates_df):
         tuple: (sample_df, plates_df, custom_plates_processed, additional_plates_processed) -
                Sample metadata, new plates DataFrames, and processing flags
     """
-    print(f"\n🔄 SUBSEQUENT RUN DETECTED")
-    print(f"Found existing database with {len(existing_sample_df)} samples and {len(existing_plates_df)} plates")
+    print(f"\n🔄 SUBSEQUENT RUN DETECTED\n")
     
     # Track what was processed
     custom_plates_processed = False
@@ -1273,8 +1271,7 @@ def process_subsequent_run(existing_sample_df, existing_plates_df):
         print(f"✅ Added {len(custom_plates)} custom plates")
         custom_plates_processed = True
     
-    if not plates_df.empty:
-        print(f"✅ Prepared {len(plates_df)} new plates for processing")
+    # Plates prepared for processing
     
     return sample_df, plates_df, custom_plates_processed, additional_plates_processed
 
@@ -1365,13 +1362,8 @@ def print_completion_summary(sample_df, final_plates_df, new_plates_df):
         final_plates_df (pd.DataFrame): Final plates data
         new_plates_df (pd.DataFrame): New plates added this run
     """
-    print(f"\n" + "=" * 60)
-    print("🎉 SUCCESS! Laboratory barcode generation completed")
-    print("=" * 60)
-    # print(f"Total samples in database: {len(sample_df)}")
-    # print(f"Total plates in database: {len(final_plates_df)}")
-    # print(f"New plates added: {len(new_plates_df)}")
-    # print("=" * 60)
+    # Completion summary suppressed for minimal output
+    pass
 
 
 def main():
