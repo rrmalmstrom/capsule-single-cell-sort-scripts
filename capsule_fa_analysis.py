@@ -865,12 +865,28 @@ def findPassFailLibs(my_lib_df, my_dest_plates):
         # Determine if whole plate needs rework (>50% overall failure)
         plate_needs_rework = overall_failure_rate > 0.5
         
-        # Apply results to ALL wells on this library plate (not just FA-analyzed ones)
-        # This extrapolates FA results to the entire library plate
+        # Apply results to wells on this library plate, but exclude unused wells
+        # This extrapolates FA results to the library plate wells that were actually used
         # Convert list to string for storage in DataFrame
         failed_index_sets_str = str(failed_index_sets)
-        my_lib_df.loc[plate_mask, 'Failed_index_sets'] = failed_index_sets_str
-        my_lib_df.loc[plate_mask, 'Redo_whole_plate'] = plate_needs_rework
+        
+        # Create mask for non-unused wells on this plate
+        non_unused_mask = plate_mask & (my_lib_df['Type'] != 'unused')
+        
+        # Apply Failed_index_sets only to wells that have FA results (non-unused wells with FA data)
+        my_lib_df.loc[non_unused_mask, 'Failed_index_sets'] = failed_index_sets_str
+        
+        # Apply Redo_whole_plate to ALL non-unused wells on this plate (regardless of FA results)
+        # This ensures consistent whole plate rework decisions across all wells on the plate
+        # Explicitly exclude 'unused' wells to keep them as null/empty
+        non_unused_plate_mask = plate_mask & (my_lib_df['Type'] != 'unused')
+        my_lib_df.loc[non_unused_plate_mask, 'Redo_whole_plate'] = plate_needs_rework
+        
+        # CRITICAL: Store the whole plate rework decision for later application to ENTIRE database
+        # This ensures ALL wells for this plate in the database get the same decision
+        if not hasattr(my_lib_df, '_plate_rework_decisions'):
+            my_lib_df._plate_rework_decisions = {}
+        my_lib_df._plate_rework_decisions[plate_barcode] = plate_needs_rework
 
     return my_lib_df
 ##########################
@@ -1124,15 +1140,35 @@ def update_database_with_fa_results_hybrid(fa_summary_df, sample_metadata_df, in
                         1: 'True', 0: 'False', 1.0: 'True', 0.0: 'False',
                         '1': 'True', '0': 'False', 'True': 'True', 'False': 'False'
                     })
-                    # Fill any unmapped values with 'False'
-                    standardized_existing = standardized_existing.fillna('False')
+                    # Preserve NULL values for unused wells - only fill 'False' for wells that should have values
+                    # Check if this is an unused well by looking at the Type column
+                    if 'Type' in updated_master_df.columns:
+                        # Only fill 'False' for non-unused wells that have unmapped values
+                        non_unused_mask = updated_master_df['Type'] != 'unused'
+                        standardized_existing.loc[non_unused_mask] = standardized_existing.loc[non_unused_mask].fillna('False')
+                        # Leave unused wells as pd.NA (NULL)
+                    else:
+                        # Fallback: fill unmapped values with 'False' if Type column not available
+                        standardized_existing = standardized_existing.fillna('False')
                     updated_master_df[col] = standardized_existing
                     
-                    # Now add the new FA values
+                    # Now add the new FA values (only for wells that have FA results)
                     fa_values = updated_master_df.loc[mask, fa_col]
                     # Convert new boolean values to string representation
                     string_values = fa_values.map({True: 'True', False: 'False', 1: 'True', 0: 'False'})
                     updated_master_df.loc[mask, col] = string_values
+                    
+                    # CRITICAL FIX: Apply whole plate rework decisions to ALL wells in the database
+                    # Check if we have stored plate rework decisions from FA analysis
+                    if hasattr(fa_summary_df, '_plate_rework_decisions'):
+                        plate_rework_decisions = fa_summary_df._plate_rework_decisions
+                        for plate_barcode, needs_rework in plate_rework_decisions.items():
+                            # Apply decision to ALL non-unused wells for this plate in the ENTIRE database
+                            plate_mask = updated_master_df['Plate_Barcode'] == plate_barcode
+                            non_unused_plate_mask = plate_mask & (updated_master_df['Type'] != 'unused')
+                            rework_value = 'True' if needs_rework else 'False'
+                            updated_master_df.loc[non_unused_plate_mask, col] = rework_value
+                            print(f"  🔧 Applied whole plate rework decision ({rework_value}) to {non_unused_plate_mask.sum()} wells for plate {plate_barcode}")
                 else:
                     updated_master_df.loc[mask, col] = updated_master_df.loc[mask, fa_col]
                 
@@ -1143,7 +1179,7 @@ def update_database_with_fa_results_hybrid(fa_summary_df, sample_metadata_df, in
                 if col == 'Failed_index_sets':
                     updated_master_df[col] = [[] for _ in range(len(updated_master_df))]
                 elif col == 'Redo_whole_plate':
-                    updated_master_df[col] = 'False'  # Use string 'False' instead of boolean
+                    updated_master_df[col] = pd.NA  # Use pd.NA for unused wells instead of 'False'
                 else:
                     updated_master_df[col] = pd.NA
         
