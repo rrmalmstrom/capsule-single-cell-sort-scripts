@@ -1179,7 +1179,8 @@ def create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments,
 
 def archive_database_file():
     """
-    Archive existing database file with timestamp suffix.
+    Archive existing database file with timestamp suffix by copying (not moving).
+    This preserves the original database for in-place updates.
     Follows the same archiving pattern as generate_barcode_labels.py.
     """
     # Archiving database - no output needed
@@ -1198,7 +1199,8 @@ def archive_database_file():
         archive_name = f"{stem}_{timestamp}{suffix}"
         archive_path = archive_dir / archive_name
         
-        shutil.move(str(db_path), str(archive_path))
+        # Copy instead of move to preserve original for in-place updates
+        shutil.copy2(str(db_path), str(archive_path))
         # Database archived - no detailed output needed
         
         # Also archive master CSV file if it exists
@@ -1208,41 +1210,56 @@ def archive_database_file():
         pass
 
 
-def update_database_with_master_table(master_df, sample_metadata_df, individual_plates_df):
+def update_database_smart(master_df, sample_metadata_df, individual_plates_df, is_first_run):
     """
-    Create updated database with existing tables plus new master DataFrame table.
+    Smart database update that only modifies what actually changes.
+    Preserves all unknown tables by only touching specific tables.
     
     Args:
-        master_df (pd.DataFrame): Master DataFrame to add as new table
-        sample_metadata_df (pd.DataFrame): Existing sample metadata (unchanged)
-        individual_plates_df (pd.DataFrame): Existing individual plates (unchanged)
+        master_df (pd.DataFrame): Master DataFrame to add/update as table
+        sample_metadata_df (pd.DataFrame): Sample metadata (for first run only)
+        individual_plates_df (pd.DataFrame): Individual plates (for first run only)
+        is_first_run (bool): True for first runs, False for subsequent runs
     """
-    # Creating updated database - no output needed
+    # Creating/updating database - no output needed
     
     db_path = Path("project_summary.db")
     
-    # Create new database with all three tables
     try:
         engine = create_engine(f'sqlite:///{db_path}')
         
-        # Save existing tables (unchanged)
-        sample_metadata_df.to_sql('sample_metadata', engine, if_exists='replace', index=False)
-        individual_plates_df.to_sql('individual_plates', engine, if_exists='replace', index=False)
-        
-        # Add new master DataFrame table
-        master_df.to_sql('master_plate_data', engine, if_exists='replace', index=False)
+        if is_first_run:
+            # First run: create all tables fresh
+            sample_metadata_df.to_sql('sample_metadata', engine, if_exists='replace', index=False)
+            individual_plates_df.to_sql('individual_plates', engine, if_exists='replace', index=False)
+            master_df.to_sql('master_plate_data', engine, if_exists='replace', index=False)
+            print(f"✅ Created database with 3 tables:")
+            print(f"  - sample_metadata: {len(sample_metadata_df)} records")
+            print(f"  - individual_plates: {len(individual_plates_df)} records")
+            print(f"  - master_plate_data: {len(master_df)} records")
+        else:
+            # Subsequent run: only update master_plate_data table
+            # sample_metadata and individual_plates remain unchanged
+            master_df.to_sql('master_plate_data', engine, if_exists='replace', index=False)
+            print(f"✅ Updated database (smart update):")
+            print(f"  - sample_metadata: unchanged")
+            print(f"  - individual_plates: unchanged")
+            print(f"  - master_plate_data: {len(master_df)} records (replaced)")
         
         # Properly dispose of engine
         engine.dispose()
         
-        print(f"✅ Created updated database with 3 tables:")
-        print(f"  - sample_metadata: {len(sample_metadata_df)} records")
-        print(f"  - individual_plates: {len(individual_plates_df)} records")
-        print(f"  - master_plate_data: {len(master_df)} records")
-        
     except Exception as e:
-        print(f"❌ FATAL ERROR: Could not create updated database: {e}")
+        print(f"❌ FATAL ERROR: Could not update database: {e}")
         sys.exit(1)
+
+
+def update_database_with_master_table(master_df, sample_metadata_df, individual_plates_df):
+    """
+    Legacy function - kept for backward compatibility.
+    Calls the new smart update function with first_run=True.
+    """
+    update_database_smart(master_df, sample_metadata_df, individual_plates_df, is_first_run=True)
 
 
 def detect_run_type():
@@ -1620,7 +1637,7 @@ def main():
     
     # Step 7: Archive existing files and update database
     archive_database_file()
-    update_database_with_master_table(master_df, sample_metadata_df, individual_plates_df)
+    update_database_smart(master_df, sample_metadata_df, individual_plates_df, is_first_run)
     
     # Step 8: Save final master DataFrame to CSV (for both first and subsequent runs)
     output_filename = "library_dataframe.csv"
