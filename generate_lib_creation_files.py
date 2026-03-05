@@ -1287,6 +1287,62 @@ def create_fa_upload_files(fa_well_assignments, individual_plates_df):
     print(f"✅ Completed FA upload file generation")
 
 
+def generate_thresholds_file(plate_list, individual_plates_df):
+    """
+    Generate thresholds.txt file for FA analysis plates in the 3_FA_analysis/ folder.
+    
+    Creates a tab-separated file with plate barcodes and fixed threshold values:
+    - Destination_plate: Plate barcodes (without F suffix)
+    - DNA_conc_threshold_(nmol/L): Empty (for manual entry)
+    - Size_theshold_(bp): Fixed value 530
+    - dilution_factor: Fixed value 20
+    
+    Args:
+        plate_list (list): List of plate names being processed
+        individual_plates_df (pd.DataFrame): Database plate information for barcode lookup
+    """
+    # Create output directory if it doesn't exist
+    output_dir = Path("3_FA_analysis")
+    output_dir.mkdir(exist_ok=True)
+    
+    # Collect plate barcodes for all processed plates
+    plate_barcodes = []
+    
+    for plate_name in plate_list:
+        # Get barcode for this plate from database
+        plate_row = individual_plates_df[individual_plates_df['plate_name'] == plate_name]
+        if plate_row.empty:
+            print(f"FATAL ERROR: Could not find barcode for plate '{plate_name}' in database")
+            print("All plates must have valid barcodes in the individual_plates table.")
+            sys.exit()
+        
+        barcode = plate_row['barcode'].iloc[0]
+        plate_barcodes.append(barcode)
+    
+    # Sort plate barcodes for consistent output
+    plate_barcodes.sort()
+    
+    # Create thresholds.txt file
+    thresholds_file = output_dir / "thresholds.txt"
+    
+    try:
+        with open(thresholds_file, 'w', newline='', encoding='utf-8') as f:
+            # Write header row
+            f.write("Destination_plate\tDNA_conc_threshold_(nmol/L)\tSize_theshold_(bp)\tdilution_factor\n")
+            
+            # Write data rows
+            for barcode in plate_barcodes:
+                # DNA concentration threshold is left empty, size threshold is 530, dilution factor is 20
+                f.write(f"{barcode}\t\t530\t20\n")
+        
+        print(f"✅ Generated thresholds.txt with {len(plate_barcodes)} plate barcodes")
+        
+    except Exception as e:
+        print(f"FATAL ERROR: Could not create thresholds.txt file: {e}")
+        print("Failed to write thresholds file to 3_FA_analysis/ folder.")
+        sys.exit()
+
+
 def create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments, individual_plates_df):
     """
     Concatenate all plate DataFrames and merge with pre-computed FA well information.
@@ -1816,6 +1872,9 @@ def main():
     
     # Create FA upload files using pre-computed FA selections
     create_fa_upload_files(fa_well_assignments, individual_plates_df)
+    
+    # Generate thresholds.txt file for FA analysis
+    generate_thresholds_file(plate_list, individual_plates_df)
     
     # Step 6: Handle master DataFrame based on run type
     if is_first_run:
