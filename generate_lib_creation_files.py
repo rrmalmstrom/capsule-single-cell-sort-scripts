@@ -714,9 +714,86 @@ def create_illumina_index_files(all_plate_layouts_with_indexes, individual_plate
     print(f"✅ Completed Illumina index file generation")
 
 
-def select_wells_for_fa_transfer(plate_df):
+def detect_upper_left_registration(plate_df):
     """
-    Select wells from a 384-well plate for FA transfer using new logic:
+    Detect if a plate uses upper left registration pattern:
+    - All even rows (B,D,F,H,J,L,N,P) contain only 'unused' wells
+    - All even columns (2,4,6,8,10,12,14,16,18,20,22,24) contain only 'unused' wells
+    - This creates a 96-well pattern using only odd rows and odd columns
+    
+    Args:
+        plate_df (pd.DataFrame): Plate layout DataFrame
+        
+    Returns:
+        bool: True if upper left registration pattern detected, False otherwise
+    """
+    # Check even rows (B,D,F,H,J,L,N,P)
+    even_rows = ['B', 'D', 'F', 'H', 'J', 'L', 'N', 'P']
+    for row in even_rows:
+        row_wells = plate_df[plate_df['Well_Row'] == row]
+        if not row_wells.empty:
+            # Check if all wells in this even row are 'unused'
+            non_unused_wells = row_wells[row_wells['Type'] != 'unused']
+            if not non_unused_wells.empty:
+                # Found non-unused wells in even row - not upper left registration
+                return False
+    
+    # Check even columns (2,4,6,8,10,12,14,16,18,20,22,24)
+    even_cols = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24]
+    for col in even_cols:
+        col_wells = plate_df[plate_df['Well_Col'] == col]
+        if not col_wells.empty:
+            # Check if all wells in this even column are 'unused'
+            non_unused_wells = col_wells[col_wells['Type'] != 'unused']
+            if not non_unused_wells.empty:
+                # Found non-unused wells in even column - not upper left registration
+                return False
+    
+    # All even rows and even columns contain only 'unused' wells
+    print("✅ Upper left registration pattern detected")
+    return True
+
+
+def select_wells_for_fa_transfer_upper_left(plate_df):
+    """
+    Select wells for FA transfer using upper left registration pattern:
+    - Direct 1:1 mapping from source to FA plate
+    - Only select wells from odd rows and odd columns that are not 'unused' or 'ladder'
+    - Maintain original well positions (A1 -> A1, C5 -> C5, etc.)
+    
+    Args:
+        plate_df (pd.DataFrame): Plate layout DataFrame
+        
+    Returns:
+        pd.DataFrame: Selected wells for FA transfer with direct mapping
+    """
+    # Get wells from odd rows and odd columns only
+    odd_rows = ['A', 'C', 'E', 'G', 'I', 'K', 'M', 'O']
+    odd_cols = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23]
+    
+    # Filter to odd rows and odd columns
+    valid_wells = plate_df[
+        (plate_df['Well_Row'].isin(odd_rows)) &
+        (plate_df['Well_Col'].isin(odd_cols))
+    ].copy()
+    
+    # Exclude 'unused' and 'ladder' wells
+    selected_wells = valid_wells[~valid_wells['Type'].isin(['unused', 'ladder'])].copy()
+    
+    if selected_wells.empty:
+        print(f"⚠️  WARNING: No valid wells found for FA transfer in upper left registration")
+        return pd.DataFrame()
+    
+    # Sort by row then column for consistent ordering
+    selected_wells = selected_wells.sort_values(['Well_Row', 'Well_Col'])
+    
+    print(f"✅ Upper left registration: Selected {len(selected_wells)} wells for direct FA mapping")
+    return selected_wells
+
+
+def select_wells_for_fa_transfer_full_plate(plate_df):
+    """
+    Select wells from a 384-well plate for FA transfer using full plate logic:
     - Exclude columns containing only 'unused' or 'ladder' wells
     - Number remaining wells column-wise until reaching the last pos_cntrl well
     - If ≤92 wells total: select all
@@ -768,13 +845,13 @@ def select_wells_for_fa_transfer(plate_df):
     if total_wells <= 92:
         # Select all wells
         selected_wells = wells_up_to_last_pos_cntrl
-        # Selected all wells - no detailed output needed
+        print(f"✅ Full plate: Selected all {total_wells} wells for FA transfer")
     else:
         # Select first 48 + last 44 wells
         first_48 = wells_up_to_last_pos_cntrl.head(48)
         last_44 = wells_up_to_last_pos_cntrl.tail(44)
         selected_wells = pd.concat([first_48, last_44])
-        # Wells selected using 48+44 logic - no detailed output needed
+        print(f"✅ Full plate: Selected 48+44={len(selected_wells)} wells for FA transfer")
     
     # Step 6: Verify the last selected well is pos_cntrl
     if not selected_wells.empty:
@@ -785,9 +862,84 @@ def select_wells_for_fa_transfer(plate_df):
     return selected_wells.drop('sequential_number', axis=1, errors='ignore')
 
 
-def assign_fa_wells(selected_wells_df):
+def select_wells_for_fa_transfer(plate_df):
     """
-    Assign FA well positions to selected wells using new 92-position layout:
+    Select wells from a 384-well plate for FA transfer using automatic pattern detection:
+    - Detects upper left registration vs full plate usage
+    - Uses appropriate selection logic for each pattern
+    
+    Args:
+        plate_df (pd.DataFrame): Plate layout DataFrame
+        
+    Returns:
+        pd.DataFrame: Selected wells for FA transfer
+    """
+    # Detect which pattern we're dealing with
+    is_upper_left = detect_upper_left_registration(plate_df)
+    
+    if is_upper_left:
+        return select_wells_for_fa_transfer_upper_left(plate_df)
+    else:
+        return select_wells_for_fa_transfer_full_plate(plate_df)
+
+
+def assign_fa_wells_upper_left(selected_wells_df):
+    """
+    Assign FA well positions for upper left registration pattern:
+    - Maps from 384-well odd positions to 96-well standard layout
+    - A1→A1, C1→B1, E1→C1, G1→D1, I1→E1, K1→F1, M1→G1, O1→H1
+    - A3→A2, C3→B2, E3→C2, G3→D2, I3→E2, K3→F2, M3→G2, O3→H2
+    - And so on...
+    
+    Args:
+        selected_wells_df (pd.DataFrame): Selected wells DataFrame
+        
+    Returns:
+        pd.DataFrame: DataFrame with FA_Well column added (compressed mapping)
+    """
+    result_df = selected_wells_df.copy()
+    
+    # Sort by column first, then row to ensure proper sequential mapping
+    result_df = result_df.sort_values(['Well_Col', 'Well_Row'])
+    
+    # Create mapping from 384-well odd positions to 96-well positions
+    # 384-well odd rows: A,C,E,G,I,K,M,O (8 rows)
+    # 384-well odd cols: 1,3,5,7,9,11,13,15,17,19,21,23 (12 columns)
+    # 96-well layout: A-H (8 rows) × 1-12 (12 columns)
+    
+    source_row_mapping = {'A': 0, 'C': 1, 'E': 2, 'G': 3, 'I': 4, 'K': 5, 'M': 6, 'O': 7}
+    source_col_mapping = {1: 0, 3: 1, 5: 2, 7: 3, 9: 4, 11: 5, 13: 6, 15: 7, 17: 8, 19: 9, 21: 10, 23: 11}
+    
+    dest_rows = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
+    
+    # Initialize FA_Well column
+    result_df['FA_Well'] = ''
+    
+    # Assign FA wells based on compressed mapping
+    for idx, row in result_df.iterrows():
+        source_row = row['Well_Row']
+        source_col = row['Well_Col']
+        
+        # Map source position to destination position
+        if source_row in source_row_mapping and source_col in source_col_mapping:
+            dest_row_idx = source_row_mapping[source_row]
+            dest_col_idx = source_col_mapping[source_col]
+            
+            dest_row = dest_rows[dest_row_idx]
+            dest_col = dest_col_idx + 1  # Convert 0-based to 1-based
+            
+            fa_well = f"{dest_row}{dest_col}"
+            result_df.at[idx, 'FA_Well'] = fa_well
+        else:
+            print(f"⚠️  WARNING: Unexpected well position {row['Well']} in upper left registration")
+    
+    print(f"✅ Upper left registration: Compressed mapped {len(result_df)} wells to 96-well FA plate")
+    return result_df
+
+
+def assign_fa_wells_full_plate(selected_wells_df):
+    """
+    Assign FA well positions to selected wells using 92-position layout:
     - Columns 1-11: All rows (A-H) = 88 positions
     - Column 12: Only rows A-D = 4 positions
     - Total: 92 positions for real samples
@@ -843,8 +995,40 @@ def assign_fa_wells(selected_wells_df):
             print(f"⚠️  WARNING: More wells selected than FA positions available")
             break
     
-    # FA wells assigned - no detailed output needed
+    print(f"✅ Full plate: Assigned {fa_index} wells to FA positions using 92-well layout")
     return sorted_df
+
+
+def assign_fa_wells(selected_wells_df):
+    """
+    Assign FA well positions using automatic pattern detection:
+    - For upper left registration: direct 1:1 mapping
+    - For full plate: complex 92-position layout mapping
+    
+    Args:
+        selected_wells_df (pd.DataFrame): Selected wells DataFrame
+        
+    Returns:
+        pd.DataFrame: DataFrame with FA_Well column added
+    """
+    if selected_wells_df.empty:
+        return selected_wells_df
+    
+    # Detect pattern by checking if we have upper left registration
+    # Upper left registration uses only odd rows and odd columns
+    odd_rows = ['A', 'C', 'E', 'G', 'I', 'K', 'M', 'O']
+    odd_cols = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23]
+    
+    # Check if all selected wells are from odd rows and odd columns
+    all_odd_rows = selected_wells_df['Well_Row'].isin(odd_rows).all()
+    all_odd_cols = selected_wells_df['Well_Col'].isin(odd_cols).all()
+    
+    if all_odd_rows and all_odd_cols:
+        # Upper left registration pattern
+        return assign_fa_wells_upper_left(selected_wells_df)
+    else:
+        # Full plate pattern
+        return assign_fa_wells_full_plate(selected_wells_df)
 
 
 def create_fa_transfer_files(fa_well_assignments, individual_plates_df):
