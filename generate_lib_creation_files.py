@@ -20,6 +20,7 @@ Features:
 - Database-driven plate validation and metadata management
 - Custom and standard plate layout processing
 - 384-well to 96-well index mapping (PE17, PE18, PE19, PE20)
+- Upper left registration detection with specialized index assignment
 - FA (Fragment Analyzer) well selection and transfer file generation
 - Illumina index transfer file creation
 - Master library dataframe with comprehensive well tracking
@@ -44,7 +45,8 @@ Database Schema (Three-Table Architecture):
 - Database file: project_summary.db (working directory)
 
 Index Assignment System:
-- 384-well plates mapped to four 96-well index sets (PE17, PE18, PE19, PE20)
+- Full plates: 384-well plates mapped to four 96-well index sets (PE17, PE18, PE19, PE20)
+- Upper left registration: Random cyclic assignment of single index set per plate
 - Odd/even row and column pattern mapping for systematic coverage
 - Index names with zero-padded format (e.g., PE17_A01, PE18_B12)
 - Unused and ladder wells excluded from index assignments
@@ -72,6 +74,7 @@ Safety Features:
 import pandas as pd
 import sys
 import shutil
+import random
 from datetime import datetime
 from pathlib import Path
 from sqlalchemy import create_engine
@@ -559,9 +562,75 @@ def create_index_mapping_dictionaries():
     return mapping
 
 
+def create_upper_left_index_mapping(assigned_index_set):
+    """
+    Create mapping dictionary for upper left registration plates.
+    Maps all 96 active wells (odd rows × odd columns) to a single index set.
+    
+    Args:
+        assigned_index_set (str): The index set to assign (PE17, PE18, PE19, or PE20)
+        
+    Returns:
+        dict: Mapping of 384-well position to (index_set, index_well) tuple
+    """
+    mapping = {}
+    
+    # Generate all 96-well positions (A1-H12) - same as current logic
+    index_wells_96 = []
+    for row in 'ABCDEFGH':
+        for col in range(1, 13):
+            index_wells_96.append(f"{row}{col}")
+    
+    # Upper left registration uses only odd rows and odd columns
+    # This matches the PE17 pattern from the original logic
+    upper_left_wells = []
+    for row_idx, row in enumerate(['A','C','E','G','I','K','M','O']):  # 8 odd rows
+        for col_idx, col in enumerate([1,3,5,7,9,11,13,15,17,19,21,23]):  # 12 odd columns
+            upper_left_wells.append(f"{row}{col}")
+    
+    # Map all 96 upper left wells to the assigned index set
+    for i, well_384 in enumerate(upper_left_wells):
+        mapping[well_384] = (assigned_index_set, index_wells_96[i])
+    
+    return mapping
+
+
+def assign_upper_left_index_sets(upper_left_plates):
+    """
+    Assign index sets to upper left registration plates using random cyclic assignment.
+    
+    Args:
+        upper_left_plates (list): List of upper left plate names
+        
+    Returns:
+        dict: Mapping of plate_name -> assigned_index_set
+    """
+    if not upper_left_plates:
+        return {}
+    
+    # Available index sets
+    index_sets = ['PE17', 'PE18', 'PE19', 'PE20']
+    
+    # Randomly select starting index set
+    start_index = random.randint(0, len(index_sets) - 1)
+    print(f"✅ Upper left registration: Random start at {index_sets[start_index]}")
+    
+    # Assign index sets cyclically
+    plate_assignments = {}
+    for i, plate_name in enumerate(upper_left_plates):
+        # Calculate cyclic index
+        current_index = (start_index + i) % len(index_sets)
+        assigned_set = index_sets[current_index]
+        plate_assignments[plate_name] = assigned_set
+        print(f"✅ Plate '{plate_name}' assigned to {assigned_set}")
+    
+    return plate_assignments
+
+
 def add_index_columns_to_plates(all_plate_layouts):
     """
     Add index assignment columns to all plate layout DataFrames.
+    Uses different strategies for upper left registration vs full plates.
     
     Args:
         all_plate_layouts (dict): Dictionary of plate_name -> DataFrame
@@ -569,11 +638,28 @@ def add_index_columns_to_plates(all_plate_layouts):
     Returns:
         dict: Updated dictionary with index columns added to each DataFrame
     """
-    # Create the mapping dictionary
-    index_mapping = create_index_mapping_dictionaries()
-    
     updated_layouts = {}
     
+    # Step 1: Detect plate types and separate them
+    upper_left_plates = []
+    full_plates = []
+    
+    for plate_name, plate_df in all_plate_layouts.items():
+        is_upper_left = detect_upper_left_registration(plate_df)
+        if is_upper_left:
+            upper_left_plates.append(plate_name)
+        else:
+            full_plates.append(plate_name)
+    
+    print(f"✅ Detected {len(upper_left_plates)} upper left plates and {len(full_plates)} full plates")
+    
+    # Step 2: Assign index sets to upper left plates
+    upper_left_assignments = assign_upper_left_index_sets(upper_left_plates)
+    
+    # Step 3: Create mapping for full plates (original logic)
+    full_plate_mapping = create_index_mapping_dictionaries() if full_plates else {}
+    
+    # Step 4: Process each plate with appropriate mapping
     for plate_name, plate_df in all_plate_layouts.items():
         # Create a copy to avoid modifying original
         updated_df = plate_df.copy()
@@ -583,11 +669,20 @@ def add_index_columns_to_plates(all_plate_layouts):
         updated_df['Index_Well'] = ''
         updated_df['Index_Name'] = ''
         
+        # Determine which mapping to use
+        if plate_name in upper_left_assignments:
+            # Upper left registration plate
+            assigned_index_set = upper_left_assignments[plate_name]
+            index_mapping = create_upper_left_index_mapping(assigned_index_set)
+        else:
+            # Full plate
+            index_mapping = full_plate_mapping
+        
         # Apply mapping to each well
         for idx, row in updated_df.iterrows():
             well_position = row['Well']
             
-            # Look up the index assignment for ALL wells (including unused/ladder)
+            # Look up the index assignment
             if well_position in index_mapping:
                 index_set, index_well = index_mapping[well_position]
                 
@@ -648,8 +743,9 @@ def create_illumina_index_files(all_plate_layouts_with_indexes, individual_plate
         # Get barcode for this plate from database
         plate_row = individual_plates_df[individual_plates_df['plate_name'] == plate_name]
         if plate_row.empty:
-            print(f"⚠️  WARNING: Could not find barcode for plate '{plate_name}' in database")
-            continue
+            print(f"FATAL ERROR: Could not find barcode for plate '{plate_name}' in database")
+            print("All plates must have valid barcodes in the individual_plates table.")
+            sys.exit()
         
         lib_plate_id = plate_row['barcode'].iloc[0]
         
@@ -670,8 +766,9 @@ def create_illumina_index_files(all_plate_layouts_with_indexes, individual_plate
                 pass
         
         if not included_index_sets:
-            print(f"⚠️  WARNING: No index sets to include for plate '{plate_name}' - all wells are unused/ladder")
-            continue
+            print(f"FATAL ERROR: No index sets to include for plate '{plate_name}' - all wells are unused/ladder")
+            print("Plates must contain at least some sample or control wells for index assignment.")
+            sys.exit()
         
         # Create output data for included index sets
         output_rows = []
@@ -781,8 +878,9 @@ def select_wells_for_fa_transfer_upper_left(plate_df):
     selected_wells = valid_wells[~valid_wells['Type'].isin(['unused', 'ladder'])].copy()
     
     if selected_wells.empty:
-        print(f"⚠️  WARNING: No valid wells found for FA transfer in upper left registration")
-        return pd.DataFrame()
+        print(f"FATAL ERROR: No valid wells found for FA transfer in upper left registration")
+        print("Upper left registration plates must contain at least some sample or control wells.")
+        sys.exit()
     
     # Sort by row then column for consistent ordering
     selected_wells = selected_wells.sort_values(['Well_Row', 'Well_Col'])
@@ -819,8 +917,9 @@ def select_wells_for_fa_transfer_full_plate(plate_df):
             valid_columns.append(col)
     
     if not valid_columns:
-        print(f"⚠️  WARNING: No valid columns found for FA transfer")
-        return pd.DataFrame()
+        print(f"FATAL ERROR: No valid columns found for FA transfer")
+        print("Full plates must contain at least some columns with sample or control wells.")
+        sys.exit()
     
     # Step 2: Get wells from valid columns only and sort column-wise
     valid_wells = plate_df[plate_df['Well_Col'].isin(valid_columns)].copy()
@@ -830,8 +929,9 @@ def select_wells_for_fa_transfer_full_plate(plate_df):
     # Step 3: Find the last pos_cntrl well
     pos_cntrl_wells = valid_wells[valid_wells['Type'] == 'pos_cntrl']
     if pos_cntrl_wells.empty:
-        print(f"⚠️  WARNING: No pos_cntrl wells found for FA transfer")
-        return pd.DataFrame()
+        print(f"FATAL ERROR: No pos_cntrl wells found for FA transfer")
+        print("Full plates must contain at least one positive control well for proper FA transfer.")
+        sys.exit()
     
     # Get the sequential number of the last pos_cntrl well
     last_pos_cntrl_number = pos_cntrl_wells['sequential_number'].max()
@@ -857,7 +957,9 @@ def select_wells_for_fa_transfer_full_plate(plate_df):
     if not selected_wells.empty:
         last_selected_well = selected_wells.iloc[-1]
         if last_selected_well['Type'] != 'pos_cntrl':
-            print(f"⚠️  WARNING: Last selected well is not pos_cntrl type: {last_selected_well['Type']}")
+            print(f"FATAL ERROR: Last selected well is not pos_cntrl type: {last_selected_well['Type']}")
+            print("FA transfer selection logic requires the last selected well to be a positive control.")
+            sys.exit()
     
     return selected_wells.drop('sequential_number', axis=1, errors='ignore')
 
@@ -931,7 +1033,9 @@ def assign_fa_wells_upper_left(selected_wells_df):
             fa_well = f"{dest_row}{dest_col}"
             result_df.at[idx, 'FA_Well'] = fa_well
         else:
-            print(f"⚠️  WARNING: Unexpected well position {row['Well']} in upper left registration")
+            print(f"FATAL ERROR: Unexpected well position {row['Well']} in upper left registration")
+            print("Upper left registration plates should only contain wells in odd rows and odd columns.")
+            sys.exit()
     
     print(f"✅ Upper left registration: Compressed mapped {len(result_df)} wells to 96-well FA plate")
     return result_df
@@ -992,8 +1096,9 @@ def assign_fa_wells_full_plate(selected_wells_df):
             fa_index += 1
         else:
             # Should not happen if selection logic is correct (max 92 wells)
-            print(f"⚠️  WARNING: More wells selected than FA positions available")
-            break
+            print(f"FATAL ERROR: More wells selected than FA positions available")
+            print("FA well assignment logic error - too many wells selected for 92-position layout.")
+            sys.exit()
     
     print(f"✅ Full plate: Assigned {fa_index} wells to FA positions using 92-well layout")
     return sorted_df
@@ -1049,14 +1154,16 @@ def create_fa_transfer_files(fa_well_assignments, individual_plates_df):
         
         # Skip plates with no FA well assignments
         if fa_wells_df.empty:
-            print(f"⚠️  WARNING: No wells selected for FA transfer for plate '{plate_name}'")
-            continue
+            print(f"FATAL ERROR: No wells selected for FA transfer for plate '{plate_name}'")
+            print("All plates must have at least some wells selected for FA transfer.")
+            sys.exit()
         
         # Get barcode for this plate from database
         plate_row = individual_plates_df[individual_plates_df['plate_name'] == plate_name]
         if plate_row.empty:
-            print(f"⚠️  WARNING: Could not find barcode for plate '{plate_name}' in database")
-            continue
+            print(f"FATAL ERROR: Could not find barcode for plate '{plate_name}' in database")
+            print("All plates must have valid barcodes in the individual_plates table.")
+            sys.exit()
         
         barcode = plate_row['barcode'].iloc[0]
         
@@ -1114,8 +1221,9 @@ def create_fa_upload_files(fa_well_assignments, individual_plates_df):
         # Get barcode for this plate from database
         plate_row = individual_plates_df[individual_plates_df['plate_name'] == plate_name]
         if plate_row.empty:
-            print(f"⚠️  WARNING: Could not find barcode for plate '{plate_name}' in database")
-            continue
+            print(f"FATAL ERROR: Could not find barcode for plate '{plate_name}' in database")
+            print("All plates must have valid barcodes in the individual_plates table.")
+            sys.exit()
         
         barcode = plate_row['barcode'].iloc[0]
         
@@ -1277,8 +1385,9 @@ def create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments,
         # Get barcode for this plate from database
         plate_row = individual_plates_df[individual_plates_df['plate_name'] == plate_name]
         if plate_row.empty:
-            print(f"⚠️  WARNING: Could not find barcode for plate '{plate_name}' in database")
-            barcode = "UNKNOWN"
+            print(f"FATAL ERROR: Could not find barcode for plate '{plate_name}' in database")
+            print("All plates must have valid barcodes in the individual_plates table.")
+            sys.exit()
         else:
             barcode = plate_row['barcode'].iloc[0]
         
@@ -1500,8 +1609,9 @@ def validate_no_duplicate_plates(plate_list, existing_master_df):
     if 'Plate_ID' in existing_master_df.columns:
         previously_processed = set(existing_master_df['Plate_ID'].unique())
     else:
-        print("⚠️  WARNING: No Plate_ID column found in existing master data")
-        return
+        print("FATAL ERROR: No Plate_ID column found in existing master data")
+        print("Existing master_plate_data table must contain 'Plate_ID' column for duplicate validation.")
+        sys.exit()
     
     # Check for duplicates
     duplicate_plates = []
