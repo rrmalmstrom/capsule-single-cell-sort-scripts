@@ -54,6 +54,7 @@ Safety Features:
 - Consistent error handling with sys.exit() (no exit codes)
 """
 
+import argparse
 import pandas as pd
 import random
 import sys
@@ -70,6 +71,45 @@ BARTENDER_HEADER = '%BTW% /AF="\\\\BARTENDER\\shared\\templates\\ECHO_BCode8.btw
 # Database and file names
 DATABASE_NAME = "project_summary.db"
 BARTENDER_FILE = "BARTENDER_sort_plate_labels.txt"
+
+
+def validate_custom_base_barcode(base_barcode):
+    """
+    Validate that a custom base barcode follows the expected format.
+    
+    Args:
+        base_barcode (str): The custom base barcode to validate
+        
+    Returns:
+        bool: True if valid, False otherwise
+        
+    Validation rules:
+    - Must be exactly 5 characters long
+    - First character must be a letter (A-Z)
+    - All characters must be uppercase letters or digits
+    - All characters must be from the allowed CHARSET
+    """
+    if not base_barcode:
+        return False
+    
+    # Check length
+    if len(base_barcode) != 5:
+        return False
+    
+    # Check first character is a letter
+    if not base_barcode[0].isalpha():
+        return False
+    
+    # Check all characters are uppercase and from allowed charset
+    if base_barcode != base_barcode.upper():
+        return False
+    
+    # Check all characters are in the allowed charset
+    for char in base_barcode:
+        if char not in CHARSET:
+            return False
+    
+    return True
 
 
 def read_sample_csv(csv_path):
@@ -154,13 +194,14 @@ def make_plate_names(sample_df):
     return result_df
 
 
-def generate_simple_barcodes(plates_df, existing_individual_plates_df=None):
+def generate_simple_barcodes(plates_df, existing_individual_plates_df=None, custom_base_barcode=None):
     """
     Generate simplified incremental barcodes for all plates.
     
     Args:
         plates_df (pd.DataFrame): DataFrame of plates needing barcodes
         existing_individual_plates_df (pd.DataFrame, optional): Existing individual plates to continue numbering
+        custom_base_barcode (str, optional): Custom base barcode to use instead of generating random one
         
     Returns:
         pd.DataFrame: DataFrame with generated barcodes
@@ -196,11 +237,25 @@ def generate_simple_barcodes(plates_df, existing_individual_plates_df=None):
         
         # Generate new base barcode only if no existing plates
         if base_barcode is None:
-            # First character must be a letter, remaining 4 can be letters or numbers
-            first_char = random.choice(LETTERS_ONLY)
-            remaining_chars = ''.join(random.choices(CHARSET, k=4))
-            base_barcode = first_char + remaining_chars
-            print(f"Generated base barcode: '{base_barcode}'")
+            if custom_base_barcode:
+                # Use provided custom base barcode
+                if not validate_custom_base_barcode(custom_base_barcode):
+                    print(f"FATAL ERROR: Invalid custom base barcode '{custom_base_barcode}'")
+                    print("Custom base barcode must be exactly 5 characters:")
+                    print("- First character must be a letter (A-Z)")
+                    print("- All characters must be uppercase letters or digits")
+                    print("- Example: REX12, ABCD1, TEST9")
+                    print("Laboratory automation requires valid barcode format for safety.")
+                    sys.exit()
+                base_barcode = custom_base_barcode.upper()
+                print(f"Using custom base barcode: '{base_barcode}'")
+            else:
+                # Generate random base barcode
+                # First character must be a letter, remaining 4 can be letters or numbers
+                first_char = random.choice(LETTERS_ONLY)
+                remaining_chars = ''.join(random.choices(CHARSET, k=4))
+                base_barcode = first_char + remaining_chars
+                print(f"Generated base barcode: '{base_barcode}'")
         
         # Assign incremental barcodes to all plates
         for i, idx in enumerate(plates_df.index):
@@ -220,12 +275,12 @@ def generate_simple_barcodes(plates_df, existing_individual_plates_df=None):
         sys.exit()
 
 
-def generate_barcodes(plates_df, existing_df=None):
+def generate_barcodes(plates_df, existing_df=None, custom_base_barcode=None):
     """
     Wrapper function for backward compatibility.
     Calls the new simplified barcode generation system.
     """
-    return generate_simple_barcodes(plates_df, existing_df)
+    return generate_simple_barcodes(plates_df, existing_df, custom_base_barcode)
 
 
 def validate_barcode_uniqueness(df):
@@ -831,6 +886,7 @@ def create_project_folder_structure():
     - 1_make_barcode_labels/
     - 2_library_creation/
     - 3_FA_analysis/
+    - 4_plate_selection_and_pooling/
     - archived_files/
     - 1_make_barcode_labels/bartender_barcode_labels/
     - 1_make_barcode_labels/previously_process_label_input_files/
@@ -849,6 +905,7 @@ def create_project_folder_structure():
             'make_barcode_labels': Path("1_make_barcode_labels"),
             'library_creation': Path("2_library_creation"),
             'fa_analysis': Path("3_FA_analysis"),
+            'plate_selection_and_pooling': Path("4_plate_selection_and_pooling"),
             'archived_files': Path("archived_files"),
         }
         
@@ -1276,13 +1333,14 @@ def process_subsequent_run(existing_sample_df, existing_plates_df):
     return sample_df, plates_df, custom_plates_processed, additional_plates_processed
 
 
-def process_barcodes(plates_df, existing_plates_df):
+def process_barcodes(plates_df, existing_plates_df, custom_base_barcode=None):
     """
     Generate and validate barcodes for new plates.
     
     Args:
         plates_df (pd.DataFrame): New plates needing barcodes
         existing_plates_df (pd.DataFrame): Existing plates data
+        custom_base_barcode (str, optional): Custom base barcode to use instead of generating random one
         
     Returns:
         tuple: (plates_df, final_plates_df) - Updated plates and combined final data
@@ -1290,7 +1348,7 @@ def process_barcodes(plates_df, existing_plates_df):
     # Generate barcodes
     
     # Generate simplified barcodes for new plates
-    plates_df = generate_simple_barcodes(plates_df, existing_plates_df)
+    plates_df = generate_simple_barcodes(plates_df, existing_plates_df, custom_base_barcode)
     
     # Validate barcode uniqueness
     if not validate_barcode_uniqueness(plates_df):
@@ -1366,11 +1424,36 @@ def print_completion_summary(sample_df, final_plates_df, new_plates_df):
     pass
 
 
+def parse_command_line_arguments():
+    """
+    Parse command line arguments for the script.
+    
+    Returns:
+        argparse.Namespace: Parsed arguments containing custom_base_barcode
+    """
+    parser = argparse.ArgumentParser(
+        description="Laboratory Barcode Label Generation Script",
+        epilog="Example: python generate_barcode_labels.py REX12"
+    )
+    
+    parser.add_argument(
+        'custom_base_barcode',
+        nargs='?',  # Optional positional argument
+        help='Custom 5-character base barcode (e.g., REX12). Must start with a letter and contain only uppercase letters and digits.'
+    )
+    
+    return parser.parse_args()
+
+
 def main():
     """
     Main script execution following laboratory safety standards.
     Uses two-table database architecture and simplified barcode system.
     """
+    # Parse command line arguments
+    args = parse_command_line_arguments()
+    custom_base_barcode = args.custom_base_barcode
+    
     print_header()
     
     # Create project folder structure
@@ -1390,7 +1473,7 @@ def main():
             return
     
     # Generate and validate barcodes
-    plates_df, final_plates_df = process_barcodes(plates_df, existing_plates_df)
+    plates_df, final_plates_df = process_barcodes(plates_df, existing_plates_df, custom_base_barcode)
     
     # Handle all file operations
     finalize_files_and_database(sample_df, final_plates_df, plates_df, folders, is_first_run, custom_plates_processed, additional_plates_processed, existing_sample_df)
