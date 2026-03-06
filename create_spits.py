@@ -124,6 +124,46 @@ def read_database_tables():
         sys.exit()
 
 
+def validate_database_schema(sample_metadata_df, individual_plates_df, master_plate_data_df):
+    """
+    Validate that database tables have all required columns for SPITS processing.
+    
+    Args:
+        sample_metadata_df (pd.DataFrame): Sample metadata table
+        individual_plates_df (pd.DataFrame): Individual plates table
+        master_plate_data_df (pd.DataFrame): Master plate data table
+        
+    Raises:
+        SystemExit: If required columns are missing
+    """
+    # Required columns for each table
+    required_columns = {
+        'sample_metadata': ['Proposal'],
+        'individual_plates': ['plate_name', 'upper_left_registration'],
+        'master_plate_data': ['Plate_ID', 'Well', 'Type', 'Index_Set', 'Passed_library']
+    }
+    
+    tables = {
+        'sample_metadata': sample_metadata_df,
+        'individual_plates': individual_plates_df,
+        'master_plate_data': master_plate_data_df
+    }
+    
+    # Check each table for required columns
+    for table_name, df in tables.items():
+        missing_columns = []
+        for col in required_columns[table_name]:
+            if col not in df.columns:
+                missing_columns.append(col)
+        
+        if missing_columns:
+            print(f"FATAL ERROR: Database table '{table_name}' missing required columns: {missing_columns}")
+            print(f"Required columns for {table_name}: {required_columns[table_name]}")
+            print(f"Found columns in {table_name}: {list(df.columns)}")
+            print("Database schema must match expected format for SPITS processing.")
+            sys.exit()
+
+
 def read_plate_selection_csv():
     """
     Read the plate selection CSV file from 4_plate_selection_and_pooling/ folder.
@@ -332,6 +372,9 @@ def select_wells_from_upper_left_plate(plate_wells):
         (plate_wells['Passed_library'] == 1)
     ].copy()
     
+    # Add plate type information for SPITS generation
+    selected_wells['is_upper_left_plate'] = True
+    
     return selected_wells
 
 
@@ -358,6 +401,9 @@ def select_wells_from_full_plate(plate_wells, index_sets_str):
         (plate_wells['Type'].isin(['sample', 'neg_cntrl'])) &
         (plate_wells['Index_Set'].isin(target_index_sets))
     ].copy()
+    
+    # Add plate type information for SPITS generation
+    selected_wells['is_upper_left_plate'] = False
     
     return selected_wells, target_index_sets
 
@@ -454,13 +500,13 @@ def get_proposal_name(sample_metadata_df):
         SystemExit: If proposal cannot be determined
     """
     # Check if proposal column exists and has values
-    if 'proposal' not in sample_metadata_df.columns:
-        print("FATAL ERROR: 'proposal' column not found in sample_metadata table")
+    if 'Proposal' not in sample_metadata_df.columns:
+        print("FATAL ERROR: 'Proposal' column not found in sample_metadata table")
         print("Sample metadata must contain proposal information for SPITS file naming.")
         sys.exit()
     
     # Get unique proposal values
-    proposals = sample_metadata_df['proposal'].dropna().unique()
+    proposals = sample_metadata_df['Proposal'].dropna().unique()
     
     if len(proposals) == 0:
         print("FATAL ERROR: No proposal values found in sample_metadata table")
@@ -475,7 +521,8 @@ def get_proposal_name(sample_metadata_df):
 
 def create_spits_sample_name(row):
     """
-    Create SPITS sample name using template: "Uncultured microbe JGI {Group1}_{Group_2}_{Group3}_{plate_id}_{well}"
+    Create SPITS sample name using template: "Uncultured microbe JGI {groups}_{plate_id}_{well}"
+    Only includes groups that have actual values (not empty, None, or 'None').
     
     Args:
         row (pd.Series): Row from selected wells DataFrame
@@ -483,13 +530,24 @@ def create_spits_sample_name(row):
     Returns:
         str: Formatted sample name
     """
-    group1 = row.get('Group_1', '')
-    group2 = row.get('Group_2', '')
-    group3 = row.get('Group_3', '')
+    # Get group values and filter out empty/None values
+    groups = []
+    for group_col in ['Group_1', 'Group_2', 'Group_3']:
+        group_val = row.get(group_col, '')
+        # Include group if it has a value and is not 'None' or empty
+        if group_val and str(group_val).strip() not in ['', 'None', 'nan']:
+            groups.append(str(group_val).strip())
+    
     plate_id = row.get('Plate_ID', '')
     well = row.get('Well', '')
     
-    return f"Uncultured microbe JGI {group1}_{group2}_{group3}_{plate_id}_{well}"
+    # Build sample name with only non-empty groups
+    if groups:
+        groups_str = '_'.join(groups)
+        return f"Uncultured microbe JGI {groups_str}_{plate_id}_{well}"
+    else:
+        # No groups have values
+        return f"Uncultured microbe JGI {plate_id}_{well}"
 
 
 def create_internal_collaborator_name(row):
@@ -570,7 +628,7 @@ def create_spits_dataframe(merged_wells_df):
             
             # From master_plate_data
             'Tube or Plate Label*': row.get('Plate_Barcode', ''),
-            'Plate location (well #)* required if samples provided in a plate.': row.get('Well', ''),
+            'Plate location (well #)* required if samples provided in a plate.': row.get('FA_Well', '') if row.get('is_upper_left_plate', False) else row.get('Well', ''),
             
             # From sample_metadata
             'Collection Year*': row.get('Collection Year', ''),
@@ -591,14 +649,54 @@ def create_spits_dataframe(merged_wells_df):
             'Sample Contact Name': '',
             'Seq Project PI Name (No edit)': '',
             'Proposal ID (No edit)': '',
-            'Control Type': '',
+            'Control Type': 'negative' if row.get('Type', '') == 'neg_cntrl' else '',
             'Control Organism Name': '',
             'Control Organism Tax ID': ''
         }
         
         spits_rows.append(spits_row)
     
-    return pd.DataFrame(spits_rows)
+    # Create DataFrame
+    spits_df = pd.DataFrame(spits_rows)
+    
+    # Define correct column order based on SPITS_header_key.csv
+    correct_column_order = [
+        'Sample Name*',
+        'Concentration* (ng/ul)',
+        'Volume* (ul)',
+        'Tube or Plate Label*',
+        'Sample Container*',
+        'Plate location (well #)* required if samples provided in a plate.',
+        'Sample Format*',
+        'Was Sample DNAse treated?*',
+        'Known / Suspected Organisms',
+        'Biosafety Material Category*',
+        'Sample Isolation Method*',
+        'Collection Year*',
+        'Collection Month*',
+        'Collection Day*',
+        'Sample Isolated From*',
+        'Collection Site or Growth Conditions* (required for RNA samples)',
+        'Latitude*',
+        'Longitude*',
+        'Depth* (in meters) or minimum depth if a range',
+        'Maximum depth (in meters) if a range',
+        'Elevation* (in meters) or minimum elevation if a range',
+        'Maximum elevation (in meters) if a range',
+        'Country*',
+        'Sample Contact Name',
+        'Seq Project PI Name (No edit)',
+        'Proposal ID (No edit)',
+        'Control Type',
+        'Control Organism Name',
+        'Control Organism Tax ID',
+        'Internal Collaborator Sample Name'
+    ]
+    
+    # Reorder columns to match SPITS header key specification
+    spits_df = spits_df[correct_column_order]
+    
+    return spits_df
 
 
 def generate_spits_csv(selected_wells_df, sample_metadata_df, output_dir):
@@ -816,6 +914,9 @@ def main():
     # Step 2: Read database tables
     sample_metadata_df, individual_plates_df, master_plate_data_df = read_database_tables()
     
+    # Step 2.5: Validate database schema
+    validate_database_schema(sample_metadata_df, individual_plates_df, master_plate_data_df)
+
     # Step 3: Read plate selection CSV
     plate_selection_df = read_plate_selection_csv()
     
