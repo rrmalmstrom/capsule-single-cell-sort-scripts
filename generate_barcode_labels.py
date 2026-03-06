@@ -37,7 +37,7 @@ File Organization:
 - BarTender files → 1_make_barcode_labels/bartender_barcode_labels/
 - Processed input files → 1_make_barcode_labels/previously_process_label_input_files/custom_plates/ and /standard_plates/
 - Archived files → archived_files/ (with timestamp suffixes)
-- Updated CSV files: sample_metadata.csv and plate_names.csv
+- Updated CSV files: sample_metadata.csv and individual_plates.csv
 
 Barcode System:
 - Single base barcode per project (5-character alphanumeric)
@@ -1122,7 +1122,7 @@ def create_updated_csv_files(sample_metadata_df, individual_plates_df):
     """
     # Create new sample_metadata.csv
     sample_metadata_df.to_csv('sample_metadata.csv', index=False)
-    individual_plates_df.to_csv('plate_names.csv', index=False)
+    individual_plates_df.to_csv('individual_plates.csv', index=False)
     # CSV files updated
 
 
@@ -1139,8 +1139,8 @@ def manage_csv_files(sample_metadata_df, individual_plates_df, folders):
     if Path('sample_metadata.csv').exists():
         archive_csv_file('sample_metadata.csv', folders)
     
-    if Path('plate_names.csv').exists():
-        archive_csv_file('plate_names.csv', folders)
+    if Path('individual_plates.csv').exists():
+        archive_csv_file('individual_plates.csv', folders)
     
     # Create new updated CSV files
     create_updated_csv_files(sample_metadata_df, individual_plates_df)

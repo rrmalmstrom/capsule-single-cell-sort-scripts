@@ -1523,7 +1523,7 @@ def create_master_dataframe(all_plate_layouts_with_indexes, fa_well_assignments,
         # Columns reordered - no detailed output needed
     
     # Save cleaned master DataFrame to CSV for inspection
-    output_filename = "library_dataframe.csv"
+    output_filename = "master_plate_data.csv"
     cleaned_df.to_csv(output_filename, index=False)
     # Master DataFrame saved - no detailed output needed
     
@@ -1685,11 +1685,11 @@ def update_individual_plates_with_layout_info(engine, layout_detection_results):
 
 def archive_and_regenerate_plate_names_csv():
     """
-    Archive existing plate_names.csv file and regenerate it from the updated database.
+    Archive existing individual_plates.csv file and regenerate it from the updated database.
     Follows the same archiving pattern as other files in the system.
     """
-    # Step 1: Archive existing plate_names.csv if it exists
-    csv_path = Path("plate_names.csv")
+    # Step 1: Archive existing individual_plates.csv if it exists
+    csv_path = Path("individual_plates.csv")
     
     if csv_path.exists():
         timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
@@ -1706,11 +1706,11 @@ def archive_and_regenerate_plate_names_csv():
         shutil.move(str(csv_path), str(archive_path))
         # Plate names CSV archived - no detailed output needed
     
-    # Step 2: Generate fresh plate_names.csv from updated database
+    # Step 2: Generate fresh individual_plates.csv from updated database
     db_path = Path("project_summary.db")
-    
+
     if not db_path.exists():
-        print("FATAL ERROR: No database file found, cannot regenerate plate_names.csv")
+        print("FATAL ERROR: No database file found, cannot regenerate individual_plates.csv")
         sys.exit()
     
     try:
@@ -1720,12 +1720,12 @@ def archive_and_regenerate_plate_names_csv():
         individual_plates_df = pd.read_sql('SELECT * FROM individual_plates', engine)
         engine.dispose()
         
-        # Generate fresh plate_names.csv with all columns including upper_left_registration
-        individual_plates_df.to_csv('plate_names.csv', index=False)
-        print("✅ Regenerated plate_names.csv with layout information")
-        
+        # Generate fresh individual_plates.csv with all columns including upper_left_registration
+        individual_plates_df.to_csv('individual_plates.csv', index=False)
+        print("✅ Regenerated individual_plates.csv with layout information")
+
     except Exception as e:
-        print(f"FATAL ERROR: Could not regenerate plate_names.csv: {e}")
+        print(f"FATAL ERROR: Could not regenerate individual_plates.csv: {e}")
         sys.exit()
 
 
@@ -1816,7 +1816,7 @@ def archive_master_csv_file():
     """
     Archive existing master DataFrame CSV file with timestamp suffix.
     """
-    csv_path = Path("library_dataframe.csv")
+    csv_path = Path("master_plate_data.csv")
     
     if csv_path.exists():
         timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
@@ -2118,11 +2118,11 @@ def main():
     archive_database_file()
     update_database_smart(master_df, sample_metadata_df, individual_plates_df, is_first_run, layout_detection_results)
     
-    # Step 7.5: Archive and regenerate plate_names.csv with layout information
+    # Step 7.5: Archive and regenerate individual_plates.csv with layout information
     archive_and_regenerate_plate_names_csv()
-    
+
     # Step 8: Save final master DataFrame to CSV (for both first and subsequent runs)
-    output_filename = "library_dataframe.csv"
+    output_filename = "master_plate_data.csv"
     master_df.to_csv(output_filename, index=False)
     # Final master DataFrame saved - no detailed output needed
     

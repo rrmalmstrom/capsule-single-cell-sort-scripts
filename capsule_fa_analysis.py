@@ -1008,7 +1008,7 @@ def archive_master_csv_file():
     """
     Archive existing master DataFrame CSV file with timestamp suffix by moving it.
     """
-    csv_path = Path("library_dataframe.csv")
+    csv_path = Path("master_plate_data.csv")
     
     if csv_path.exists():
         timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
@@ -1026,9 +1026,9 @@ def archive_master_csv_file():
 
 def archive_plate_names_csv_file():
     """
-    Archive existing plate_names.csv file with timestamp suffix.
+    Archive existing individual_plates.csv file with timestamp suffix.
     """
-    csv_path = Path("plate_names.csv")
+    csv_path = Path("individual_plates.csv")
     
     if csv_path.exists():
         timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
@@ -1047,7 +1047,7 @@ def archive_plate_names_csv_file():
 
 def generate_plate_names_csv_from_database():
     """
-    Generate fresh plate_names.csv from updated individual_plates table.
+    Generate fresh individual_plates.csv from updated individual_plates table.
     """
     try:
         # Read individual_plates table from database
@@ -1056,13 +1056,13 @@ def generate_plate_names_csv_from_database():
         individual_plates_df = pd.read_sql('SELECT * FROM individual_plates', engine)
         engine.dispose()
         
-        # Select only the columns that should be in plate_names.csv
+        # Select only the columns that should be in individual_plates.csv
         # (excluding FA tracking columns)
         plate_names_columns = ['plate_name', 'project', 'sample', 'plate_number', 'is_custom', 'barcode', 'created_timestamp']
         plate_names_df = individual_plates_df[plate_names_columns].copy()
         
-        # Generate fresh plate_names.csv
-        output_filename = "plate_names.csv"
+        # Generate fresh individual_plates.csv
+        output_filename = "individual_plates.csv"
         plate_names_df.to_csv(output_filename, index=False)
         
         print(f"✅ Generated fresh {output_filename} with {len(plate_names_df)} rows")
@@ -1070,24 +1070,24 @@ def generate_plate_names_csv_from_database():
         return plate_names_df
         
     except Exception as e:
-        print(f"❌ ERROR: Could not generate plate_names.csv: {e}")
+        print(f"❌ ERROR: Could not generate individual_plates.csv: {e}")
         raise
 
 
 def generate_fresh_library_dataframe_csv(updated_master_df):
     """
-    Generate fresh library_dataframe.csv from updated master_plate_data.
+    Generate fresh master_plate_data.csv from updated master_plate_data.
     
     Args:
         updated_master_df: Updated master plate data DataFrame
     """
     try:
-        output_filename = "library_dataframe.csv"
+        output_filename = "master_plate_data.csv"
         updated_master_df.to_csv(output_filename, index=False)
-        print(f"✅ Generated fresh library_dataframe.csv with {len(updated_master_df)} rows")
+        print(f"✅ Generated fresh master_plate_data.csv with {len(updated_master_df)} rows")
         
     except Exception as e:
-        print(f"❌ Error generating library_dataframe.csv: {e}")
+        print(f"❌ Error generating master_plate_data.csv: {e}")
         raise
 
 

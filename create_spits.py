@@ -848,15 +848,15 @@ def archive_database_and_csv_files():
         shutil.copy2(str(db_path), str(archive_db_path))
         print(f"✅ Archived database: {archive_db_path}")
     
-    # Archive library_dataframe.csv
-    library_csv_path = Path("library_dataframe.csv")
+    # Archive master_plate_data.csv
+    library_csv_path = Path("master_plate_data.csv")
     if library_csv_path.exists():
         archive_csv_path = archive_dir / f"library_dataframe_{timestamp}.csv"
         shutil.move(str(library_csv_path), str(archive_csv_path))
         print(f"✅ Archived library CSV: {archive_csv_path}")
     
-    # Archive plate_names.csv
-    plate_names_csv_path = Path("plate_names.csv")
+    # Archive individual_plates.csv
+    plate_names_csv_path = Path("individual_plates.csv")
     if plate_names_csv_path.exists():
         archive_plate_csv_path = archive_dir / f"plate_names_{timestamp}.csv"
         shutil.move(str(plate_names_csv_path), str(archive_plate_csv_path))
@@ -872,15 +872,15 @@ def regenerate_csv_files():
     try:
         engine = create_engine(f'sqlite:///{db_path}')
         
-        # Regenerate library_dataframe.csv from master_plate_data table
+        # Regenerate master_plate_data.csv from master_plate_data table
         master_plate_data_df = pd.read_sql('SELECT * FROM master_plate_data', engine)
-        master_plate_data_df.to_csv('library_dataframe.csv', index=False)
-        print(f"✅ Regenerated library_dataframe.csv with {len(master_plate_data_df)} records")
-        
-        # Regenerate plate_names.csv from individual_plates table
+        master_plate_data_df.to_csv('master_plate_data.csv', index=False)
+        print(f"✅ Regenerated master_plate_data.csv with {len(master_plate_data_df)} records")
+
+        # Regenerate individual_plates.csv from individual_plates table
         individual_plates_df = pd.read_sql('SELECT * FROM individual_plates', engine)
-        individual_plates_df.to_csv('plate_names.csv', index=False)
-        print(f"✅ Regenerated plate_names.csv with {len(individual_plates_df)} records")
+        individual_plates_df.to_csv('individual_plates.csv', index=False)
+        print(f"✅ Regenerated individual_plates.csv with {len(individual_plates_df)} records")
         
         engine.dispose()
         
