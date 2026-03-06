@@ -636,9 +636,12 @@ def add_index_columns_to_plates(all_plate_layouts):
         all_plate_layouts (dict): Dictionary of plate_name -> DataFrame
         
     Returns:
-        dict: Updated dictionary with index columns added to each DataFrame
+        tuple: (updated_layouts_dict, layout_detection_results_dict)
+               updated_layouts_dict: Updated dictionary with index columns added to each DataFrame
+               layout_detection_results_dict: Dictionary of plate_name -> is_upper_left_bool
     """
     updated_layouts = {}
+    layout_detection_results = {}
     
     # Step 1: Detect plate types and separate them
     upper_left_plates = []
@@ -646,6 +649,7 @@ def add_index_columns_to_plates(all_plate_layouts):
     
     for plate_name, plate_df in all_plate_layouts.items():
         is_upper_left = detect_upper_left_registration(plate_df)
+        layout_detection_results[plate_name] = is_upper_left
         if is_upper_left:
             upper_left_plates.append(plate_name)
         else:
@@ -705,7 +709,7 @@ def add_index_columns_to_plates(all_plate_layouts):
         assigned_count = len(updated_df[updated_df['Index_Set'] != ''])
         # Index assignments added - no detailed output needed
     
-    return updated_layouts
+    return updated_layouts, layout_detection_results
 
 
 # def export_plates_to_csv(all_plate_layouts_with_indexes):
@@ -1559,7 +1563,7 @@ def archive_database_file():
         pass
 
 
-def update_database_smart(master_df, sample_metadata_df, individual_plates_df, is_first_run):
+def update_database_smart(master_df, sample_metadata_df, individual_plates_df, is_first_run, layout_detection_results=None):
     """
     Smart database update that only modifies what actually changes.
     Preserves all unknown tables by only touching specific tables.
@@ -1569,6 +1573,7 @@ def update_database_smart(master_df, sample_metadata_df, individual_plates_df, i
         sample_metadata_df (pd.DataFrame): Sample metadata (for first run only)
         individual_plates_df (pd.DataFrame): Individual plates (for first run only)
         is_first_run (bool): True for first runs, False for subsequent runs
+        layout_detection_results (dict): Dictionary of plate_name -> is_upper_left_bool (optional)
     """
     # Creating/updating database - no output needed
     
@@ -1579,20 +1584,31 @@ def update_database_smart(master_df, sample_metadata_df, individual_plates_df, i
         
         if is_first_run:
             # First run: create all tables fresh
+            # Add upper_left_registration column to individual_plates_df if layout results provided
+            if layout_detection_results:
+                individual_plates_with_layout = add_layout_info_to_individual_plates(
+                    individual_plates_df, layout_detection_results
+                )
+            else:
+                individual_plates_with_layout = individual_plates_df
+            
             sample_metadata_df.to_sql('sample_metadata', engine, if_exists='replace', index=False)
-            individual_plates_df.to_sql('individual_plates', engine, if_exists='replace', index=False)
+            individual_plates_with_layout.to_sql('individual_plates', engine, if_exists='replace', index=False)
             master_df.to_sql('master_plate_data', engine, if_exists='replace', index=False)
             print(f"✅ Created database with 3 tables:")
             print(f"  - sample_metadata: {len(sample_metadata_df)} records")
-            print(f"  - individual_plates: {len(individual_plates_df)} records")
+            print(f"  - individual_plates: {len(individual_plates_with_layout)} records")
             print(f"  - master_plate_data: {len(master_df)} records")
         else:
             # Subsequent run: only update master_plate_data table
-            # sample_metadata and individual_plates remain unchanged
+            # sample_metadata and individual_plates remain unchanged, but update layout info if provided
+            if layout_detection_results:
+                update_individual_plates_with_layout_info(engine, layout_detection_results)
+            
             master_df.to_sql('master_plate_data', engine, if_exists='replace', index=False)
             print(f"✅ Updated database (smart update):")
             print(f"  - sample_metadata: unchanged")
-            print(f"  - individual_plates: unchanged")
+            print(f"  - individual_plates: updated with layout info for {len(layout_detection_results) if layout_detection_results else 0} plates")
             print(f"  - master_plate_data: {len(master_df)} records (replaced)")
         
         # Properly dispose of engine
@@ -1601,6 +1617,116 @@ def update_database_smart(master_df, sample_metadata_df, individual_plates_df, i
     except Exception as e:
         print(f"❌ FATAL ERROR: Could not update database: {e}")
         sys.exit(1)
+
+
+def add_layout_info_to_individual_plates(individual_plates_df, layout_detection_results):
+    """
+    Add upper_left_registration column to individual_plates DataFrame for first run.
+    Only sets values for plates being processed - others remain NULL.
+    
+    Args:
+        individual_plates_df (pd.DataFrame): Original individual plates DataFrame
+        layout_detection_results (dict): Dictionary of plate_name -> is_upper_left_bool
+        
+    Returns:
+        pd.DataFrame: Updated DataFrame with upper_left_registration column
+    """
+    # Create a copy to avoid modifying original
+    updated_df = individual_plates_df.copy()
+    
+    # Add the new column with default value NULL (pd.NA)
+    # This ensures plates not being processed have NULL values
+    updated_df['upper_left_registration'] = pd.NA
+    
+    # Update values ONLY for plates being processed in this run
+    for plate_name, is_upper_left in layout_detection_results.items():
+        mask = updated_df['plate_name'] == plate_name
+        updated_df.loc[mask, 'upper_left_registration'] = is_upper_left
+    
+    return updated_df
+
+
+def update_individual_plates_with_layout_info(engine, layout_detection_results):
+    """
+    Update individual_plates table with layout information for subsequent runs.
+    Adds column if it doesn't exist, then updates records ONLY for plates being processed.
+    
+    Args:
+        engine: SQLAlchemy engine for database connection
+        layout_detection_results (dict): Dictionary of plate_name -> is_upper_left_bool
+    """
+    from sqlalchemy import text
+    
+    try:
+        # Check if upper_left_registration column exists, add if not
+        with engine.connect() as conn:
+            # Try to add column (will fail silently if column already exists)
+            # Default NULL ensures unprocessed plates remain NULL
+            try:
+                conn.execute(text("ALTER TABLE individual_plates ADD COLUMN upper_left_registration BOOLEAN DEFAULT NULL"))
+                conn.commit()
+                print("✅ Added upper_left_registration column to individual_plates table")
+            except Exception:
+                # Column already exists - this is expected for subsequent runs after first implementation
+                pass
+            
+            # Update records ONLY for the plates being processed in this run
+            for plate_name, is_upper_left in layout_detection_results.items():
+                conn.execute(
+                    text("UPDATE individual_plates SET upper_left_registration = :is_upper_left WHERE plate_name = :plate_name"),
+                    {"is_upper_left": is_upper_left, "plate_name": plate_name}
+                )
+            conn.commit()
+            
+    except Exception as e:
+        print(f"❌ FATAL ERROR: Could not update individual_plates with layout info: {e}")
+        raise
+
+
+def archive_and_regenerate_plate_names_csv():
+    """
+    Archive existing plate_names.csv file and regenerate it from the updated database.
+    Follows the same archiving pattern as other files in the system.
+    """
+    # Step 1: Archive existing plate_names.csv if it exists
+    csv_path = Path("plate_names.csv")
+    
+    if csv_path.exists():
+        timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
+        archive_dir = Path("archived_files")
+        archive_dir.mkdir(exist_ok=True)
+        
+        # Create archive name with timestamp suffix
+        stem = csv_path.stem  # "plate_names"
+        suffix = csv_path.suffix  # ".csv"
+        archive_name = f"{stem}_{timestamp}{suffix}"
+        archive_path = archive_dir / archive_name
+        
+        # Move existing file to archive
+        shutil.move(str(csv_path), str(archive_path))
+        # Plate names CSV archived - no detailed output needed
+    
+    # Step 2: Generate fresh plate_names.csv from updated database
+    db_path = Path("project_summary.db")
+    
+    if not db_path.exists():
+        print("FATAL ERROR: No database file found, cannot regenerate plate_names.csv")
+        sys.exit()
+    
+    try:
+        engine = create_engine(f'sqlite:///{db_path}')
+        
+        # Read the updated individual_plates table
+        individual_plates_df = pd.read_sql('SELECT * FROM individual_plates', engine)
+        engine.dispose()
+        
+        # Generate fresh plate_names.csv with all columns including upper_left_registration
+        individual_plates_df.to_csv('plate_names.csv', index=False)
+        print("✅ Regenerated plate_names.csv with layout information")
+        
+    except Exception as e:
+        print(f"FATAL ERROR: Could not regenerate plate_names.csv: {e}")
+        sys.exit()
 
 
 def update_database_with_master_table(master_df, sample_metadata_df, individual_plates_df):
@@ -1858,8 +1984,8 @@ def main():
     all_plate_layouts = {**custom_layout_data, **standard_layout_data}
     print(f"✅ Total plates processed: {len(all_plate_layouts)} ({len(custom_layout_data)} custom + {len(standard_layout_data)} standard)")
     
-    # Add index assignments to all plates
-    all_plate_layouts_with_indexes = add_index_columns_to_plates(all_plate_layouts)
+    # Add index assignments to all plates and capture layout detection results
+    all_plate_layouts_with_indexes, layout_detection_results = add_index_columns_to_plates(all_plate_layouts)
     
     # Create Illumina index transfer files
     create_illumina_index_files(all_plate_layouts_with_indexes, individual_plates_df)
@@ -1990,7 +2116,10 @@ def main():
     
     # Step 7: Archive existing files and update database
     archive_database_file()
-    update_database_smart(master_df, sample_metadata_df, individual_plates_df, is_first_run)
+    update_database_smart(master_df, sample_metadata_df, individual_plates_df, is_first_run, layout_detection_results)
+    
+    # Step 7.5: Archive and regenerate plate_names.csv with layout information
+    archive_and_regenerate_plate_names_csv()
     
     # Step 8: Save final master DataFrame to CSV (for both first and subsequent runs)
     output_filename = "library_dataframe.csv"
