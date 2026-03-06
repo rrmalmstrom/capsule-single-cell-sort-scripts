@@ -79,8 +79,8 @@ The script creates organized output folders:
 │   └── Illumina_index_{plate_name}.csv
 ├── FA_transfer_files/
 │   └── FA_plate_transfer_{plate_name}.csv
-├── FA_input_files/
-│   └── FA_input_{plate_name}_{barcode}.csv
+├── FA_upload_files/
+│   └── FA_upload_{plate_name}_{barcode}.csv
 ├── previously_processed_files/
 │   ├── list_of_sorted_plates/
 │   │   └── library_sort_plates_{timestamp}.txt
@@ -113,8 +113,8 @@ The script creates organized output folders:
 - `FA_Well` - Destination 96-well position
 - Volume and buffer specifications
 
-### 3. FA Input Files
-**Location:** `2_library_creation/FA_input_files/`
+### 3. FA Upload Files
+**Location:** `2_library_creation/FA_upload_files/`
 **Format:** CSV files without headers for FA instrument
 **Content:**
 - Sequential number (1-96)

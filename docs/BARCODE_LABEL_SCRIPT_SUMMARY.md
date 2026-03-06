@@ -5,12 +5,15 @@ The `generate_barcode_labels.py` script generates BarTender-compatible barcode l
 
 ## Script Execution
 ```bash
-python generate_barcode_labels.py
+python generate_barcode_labels.py [CUSTOM_BASE_BARCODE]
 ```
 
 **Requirements:**
 - Must use `sip-lims` conda environment
 - Run from the working directory containing input files
+
+**Optional Arguments:**
+- `CUSTOM_BASE_BARCODE`: 5-character custom base barcode (e.g., REX12). Must start with a letter and contain only uppercase letters and digits.
 
 ## Input Files Required
 
@@ -127,11 +130,11 @@ working_directory/
 
 **Format:** 5-character alphanumeric base + incremental number
 - **Base:** First character = letter, remaining 4 = letters/numbers
-- **Numbering:** BASE.1, BASE.2, BASE.3, etc.
-- **Echo variant:** eBASE.1, eBASE.2 (lowercase 'e' prefix)
-- **Hamilton variant:** hBASE.1, hBASE.2 (lowercase 'h' prefix)
+- **Numbering:** BASE-1, BASE-2, BASE-3, etc.
+- **Echo variant:** eBASE-1, eBASE-2 (lowercase 'e' prefix)
+- **Hamilton variant:** hBASE-1, hBASE-2 (lowercase 'h' prefix)
 
-**Example:** `YL28G.1`, `YL28G.2`, `YL28G.3`
+**Example:** `YL28G-1`, `YL28G-2`, `YL28G-3`
 
 ## File Management Features
 
