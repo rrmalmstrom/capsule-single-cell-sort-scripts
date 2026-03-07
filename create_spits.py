@@ -628,7 +628,7 @@ def create_spits_dataframe(merged_wells_df):
             
             # From master_plate_data
             'Tube or Plate Label*': row.get('Plate_Barcode', ''),
-            'Plate location (well #)* required if samples provided in a plate.': row.get('FA_Well', '') if row.get('is_upper_left_plate', False) else row.get('Well', ''),
+            'Plate location (well #)* required if samples provided in a plate.': row.get('Well', ''),
             
             # From sample_metadata
             'Collection Year*': row.get('Collection Year', ''),
