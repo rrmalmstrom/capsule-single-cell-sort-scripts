@@ -41,7 +41,7 @@ def create_success_marker():
 
 
 def read_project_database(base_dir):
-    """Read the ESP project database from project_summary.db into a pandas DataFrame."""
+    """Read the ESP project database from project_summary.db into pandas DataFrames."""
     db_path = Path(base_dir) / "project_summary.db"
     
     if not db_path.exists():
@@ -49,44 +49,82 @@ def read_project_database(base_dir):
     
     try:
         conn = sqlite3.connect(db_path)
-        # Read from master_plate_data table (identified from database inspection)
-        db_df = pd.read_sql_query("SELECT * FROM master_plate_data", conn)
+        
+        # Read master_plate_data table
+        master_plate_df = pd.read_sql_query("SELECT * FROM master_plate_data", conn)
+        logger.info(f"Successfully read master_plate_data with {len(master_plate_df)} records")
+        logger.info(f"Master plate data columns: {list(master_plate_df.columns)}")
+        
+        # Read individual_plates table
+        individual_plates_df = pd.read_sql_query("SELECT * FROM individual_plates", conn)
+        logger.info(f"Successfully read individual_plates with {len(individual_plates_df)} records")
+        logger.info(f"Individual plates columns: {list(individual_plates_df.columns)}")
+        
         conn.close()
         
-        logger.info(f"Successfully read database with {len(db_df)} records")
-        logger.info(f"Database columns: {list(db_df.columns)}")
-        
-        return db_df
+        return master_plate_df, individual_plates_df
         
     except Exception as e:
         logger.error(f"Error reading database: {e}")
         raise
 
 
+def identify_expected_grid_samples(master_plate_df, individual_plates_df):
+    """
+    Identify which samples should be present in grid tables based on pooling selection.
+    
+    Logic:
+    1. Find plates selected for pooling from individual_plates table
+    2. Find samples selected for pooling from master_plate_data table
+    3. Return samples that meet both criteria
+    """
+    logger.info("Identifying samples expected in grid tables...")
+    
+    # Check for required columns
+    if 'selected_for_pooling' not in individual_plates_df.columns:
+        logger.error("Missing 'selected_for_pooling' column in individual_plates table")
+        logger.error("SCRIPT TERMINATED: Cannot determine which plates are selected for pooling")
+        sys.exit()
+    
+    if 'selected_for_pooling' not in master_plate_df.columns:
+        logger.error("Missing 'selected_for_pooling' column in master_plate_data table")
+        logger.error("SCRIPT TERMINATED: Cannot determine which samples are selected for pooling")
+        sys.exit()
+    
+    # Get plates selected for pooling
+    selected_plates = individual_plates_df[
+        individual_plates_df['selected_for_pooling'] == True
+    ]['barcode'].tolist()
+    
+    logger.info(f"Found {len(selected_plates)} plates selected for pooling: {selected_plates}")
+    
+    # Get samples selected for pooling from selected plates
+    expected_samples = master_plate_df[
+        (master_plate_df['selected_for_pooling'] == True) &
+        (master_plate_df['Plate_Barcode'].isin(selected_plates))
+    ].copy()
+    
+    logger.info(f"Found {len(expected_samples)} samples expected in grid tables")
+    logger.info(f"Expected samples from plates: {expected_samples['Plate_Barcode'].unique().tolist()}")
+    
+    if len(expected_samples) == 0:
+        logger.error("No samples found that are selected for pooling from plates selected for pooling")
+        logger.error("SCRIPT TERMINATED: No expected grid table samples identified")
+        sys.exit()
+    
+    return expected_samples, selected_plates
+
+
 def validate_grid_table_columns(csv_file):
     """Check if CSV file has required grid table columns without full validation."""
-    required_columns = [
-        'Illumina Library',
-        'Nucleic Acid ID', 
-        'Library Plate Container Barcode',
-        'Well',
-        'Library Plate Label'
-    ]
+    is_valid, error_msg = validate_grid_table_columns_detailed(csv_file)
     
-    try:
-        # Read just the header to check columns
-        df_header = pd.read_csv(csv_file, nrows=0)
-        missing_columns = [col for col in required_columns if col not in df_header.columns]
-        
-        if missing_columns:
-            logger.warning(f"Missing columns in {csv_file}: {missing_columns}")
-            return False
-        
-        return True
-        
-    except Exception as e:
-        logger.error(f"Error validating {csv_file}: {e}")
-        return False
+    if not is_valid:
+        logger.error(f"Invalid grid table file {csv_file}: {error_msg}")
+        logger.error("SCRIPT TERMINATED: Required columns are missing from grid table file")
+        sys.exit()
+    
+    return True
 
 
 def find_csv_files(base_dir):
@@ -96,8 +134,9 @@ def find_csv_files(base_dir):
         # Look in the 4_plate_selection_and_pooling subdirectory
         grid_table_dir = Path(base_dir) / "4_plate_selection_and_pooling"
         if not grid_table_dir.exists():
-            logger.warning(f"Grid table directory not found: {grid_table_dir}")
-            return []
+            logger.error(f"Grid table directory not found: {grid_table_dir}")
+            logger.error("SCRIPT TERMINATED: Required grid table directory does not exist")
+            sys.exit()
         
         for file_path in grid_table_dir.glob("*.csv"):
             csv_files.append(str(file_path))
@@ -110,27 +149,95 @@ def find_csv_files(base_dir):
 
 def find_all_grid_tables(base_dir):
     """
-    Find all valid grid table CSV files in the base directory.
-    Adapted from SPS version to work with ESP grid table format.
-    """
-    logger.info("Searching for grid table files...")
+    Find and validate ALL grid table files in directory.
+    Adapted from SPS script to work with ESP grid table format.
     
+    This function scans the 4_plate_selection_and_pooling directory for CSV files and validates
+    each one to determine if it contains the required grid table columns. It
+    supports multi-file processing by finding ALL valid grid table files rather
+    than just one.
+    
+    Args:
+        base_dir (str): Base directory to scan for CSV files
+        
+    Returns:
+        list: List of valid grid table file paths as strings
+        
+    Raises:
+        SystemExit: If no valid grid tables found with detailed error message
+        
+    Validation Process:
+        1. Scans 4_plate_selection_and_pooling directory for all CSV files
+        2. Checks each CSV for required column headers
+        3. Reports invalid files with specific error messages
+        4. Returns all valid files for multi-grid processing
+        
+    Required Columns:
+        - Well: Well position (e.g., A1, B2, C3)
+        - Library Plate Label: Destination plate name
+        - Illumina Library: Library identifier
+        - Library Plate Container Barcode: Destination plate barcode
+        - Nucleic Acid ID: Sample identifier
+    """
+    logger.info("Scanning for grid table CSV files...")
+    
+    # Find all CSV files in the grid table directory
     csv_files = find_csv_files(base_dir)
-    valid_grid_tables = []
+    
+    if not csv_files:
+        logger.error("No CSV files found in 4_plate_selection_and_pooling directory")
+        logger.error("SCRIPT TERMINATED: Grid table directory contains no CSV files")
+        sys.exit()
+    
+    # Validate each CSV file
+    valid_files = []
+    invalid_files = []
     
     for csv_file in csv_files:
-        if validate_grid_table_columns(csv_file):
-            valid_grid_tables.append(csv_file)
+        is_valid, error_msg = validate_grid_table_columns_detailed(csv_file)
+        if is_valid:
+            valid_files.append(csv_file)
             logger.info(f"Valid grid table found: {Path(csv_file).name}")
         else:
-            logger.info(f"Skipping non-grid table file: {Path(csv_file).name}")
+            invalid_files.append((csv_file, error_msg))
+            logger.info(f"Skipping non-grid table file: {Path(csv_file).name} - {error_msg}")
     
-    if not valid_grid_tables:
-        logger.warning("No valid grid table files found!")
-    else:
-        logger.info(f"Found {len(valid_grid_tables)} valid grid table(s)")
+    # Handle results
+    if len(valid_files) == 0:
+        logger.error(f"No valid grid table found in 4_plate_selection_and_pooling directory")
+        logger.error(f"Found {len(csv_files)} CSV file(s), but none contain the required columns:")
+        for csv_file, error_msg in invalid_files:
+            logger.error(f"- {Path(csv_file).name}: {error_msg}")
+        logger.error("A grid table CSV file must contain these required columns:")
+        logger.error("- Well")
+        logger.error("- Library Plate Label")
+        logger.error("- Illumina Library")
+        logger.error("- Library Plate Container Barcode")
+        logger.error("- Nucleic Acid ID")
+        logger.error("SCRIPT TERMINATED: No valid grid table files found")
+        sys.exit()
     
-    return valid_grid_tables
+    # Return all valid files
+    logger.info(f"Found {len(valid_files)} valid grid table file(s)")
+    return valid_files
+
+
+def validate_grid_table_columns_detailed(csv_file):
+    """Check if CSV file has required grid table columns with detailed error reporting."""
+    required_cols = ['Well', 'Library Plate Label', 'Illumina Library', 'Library Plate Container Barcode', 'Nucleic Acid ID']
+    
+    try:
+        # Read only the header row to check columns
+        df_header = pd.read_csv(csv_file, nrows=0)
+        missing_cols = [col for col in required_cols if col not in df_header.columns]
+        
+        if not missing_cols:
+            return True, None
+        else:
+            return False, f"Missing columns: {missing_cols}"
+            
+    except Exception as e:
+        return False, f"Error reading file: {e}"
 
 
 def read_multiple_grid_tables(grid_table_files):
@@ -206,121 +313,166 @@ def detect_duplicate_samples(grid_dataframes):
                  if len(sources) > 1}
     
     if duplicates:
-        logger.warning(f"Found {len(duplicates)} duplicate samples:")
+        logger.error(f"Found {len(duplicates)} duplicate samples:")
         for sample, sources in duplicates.items():
-            logger.warning(f"  {sample} appears in: {', '.join(sources)}")
-        return duplicates
+            logger.error(f"  {sample} appears in: {', '.join(sources)}")
+        logger.error("SCRIPT TERMINATED: Duplicate samples detected - data integrity compromised")
+        sys.exit()
     else:
         logger.info("No duplicate samples found")
         return {}
 
 
-def validate_and_merge_data(db_df, grid_df):
+def validate_grid_table_completeness(expected_samples, combined_grid_df):
     """
-    Validate and merge grid table data with ESP database.
+    Validate that grid table contains exactly the expected samples (no more, no less).
+    """
+    logger.info("Validating grid table completeness against expected samples...")
+    
+    # Create sets for comparison using (Plate_Barcode, Well) tuples
+    expected_set = set(zip(expected_samples['Plate_Barcode'], expected_samples['Well']))
+    grid_set = set(zip(combined_grid_df['Library Plate Label'], combined_grid_df['Well']))
+    
+    # Find missing samples (expected but not in grid)
+    missing_from_grid = expected_set - grid_set
+    
+    # Find unexpected samples (in grid but not expected)
+    unexpected_in_grid = grid_set - expected_set
+    
+    logger.info(f"Validation results:")
+    logger.info(f"  Expected samples: {len(expected_set)}")
+    logger.info(f"  Grid table samples: {len(grid_set)}")
+    logger.info(f"  Missing from grid: {len(missing_from_grid)}")
+    logger.info(f"  Unexpected in grid: {len(unexpected_in_grid)}")
+    
+    # Report missing samples
+    if missing_from_grid:
+        logger.error(f"Found {len(missing_from_grid)} expected samples missing from grid tables:")
+        for plate_barcode, well in missing_from_grid:
+            logger.error(f"  {plate_barcode} - {well}")
+        logger.error("SCRIPT TERMINATED: Expected samples missing from grid tables")
+        sys.exit()
+    
+    # Report unexpected samples
+    if unexpected_in_grid:
+        logger.error(f"Found {len(unexpected_in_grid)} unexpected samples in grid tables:")
+        for plate_barcode, well in unexpected_in_grid:
+            logger.error(f"  {plate_barcode} - {well}")
+        logger.error("SCRIPT TERMINATED: Grid tables contain samples not selected for pooling")
+        sys.exit()
+    
+    logger.info("Grid table validation passed - perfect match with expected samples")
+    return True
+
+
+def validate_and_merge_data(master_plate_df, expected_samples, grid_df):
+    """
+    Validate and merge grid table data with master plate dataframe.
+    Only expected samples should have grid data, but all master data is preserved.
     
     ESP merging strategy:
-    - Grid table: ['Library Plate Label', 'Well'] 
-    - Database: ['Plate_Barcode', 'Well']
+    - Grid table: ['Library Plate Label', 'Well']
+    - Master plate data: ['Plate_Barcode', 'Well']
     """
-    logger.info("Validating and merging grid table with ESP database...")
+    logger.info("Validating and merging grid table with master plate data...")
     
     # Check required columns exist
     grid_merge_cols = ['Library Plate Label', 'Well']
     db_merge_cols = ['Plate_Barcode', 'Well']
     
     missing_grid_cols = [col for col in grid_merge_cols if col not in grid_df.columns]
-    missing_db_cols = [col for col in db_merge_cols if col not in db_df.columns]
+    missing_db_cols = [col for col in db_merge_cols if col not in master_plate_df.columns]
     
     if missing_grid_cols:
-        raise ValueError(f"Missing grid table columns: {missing_grid_cols}")
+        logger.error(f"Missing grid table columns: {missing_grid_cols}")
+        logger.error("SCRIPT TERMINATED: Required columns missing from grid table")
+        sys.exit()
     if missing_db_cols:
-        raise ValueError(f"Missing database columns: {missing_db_cols}")
+        logger.error(f"Missing master plate data columns: {missing_db_cols}")
+        logger.error("SCRIPT TERMINATED: Required columns missing from database")
+        sys.exit()
     
     # Prepare dataframes for merging
-    grid_merge_df = grid_df[grid_merge_cols + ['Nucleic Acid ID', 'Illumina Library', 'Source_File']].copy()
-    db_merge_df = db_df.copy()
+    # Grid table columns we want to add to the master dataframe
+    grid_data_cols = ['Illumina Library', 'Nucleic Acid ID', 'Library Plate Container Barcode']
+    grid_merge_df = grid_df[grid_merge_cols + grid_data_cols].copy()
     
-    # Rename columns for merging
+    # Rename grid table merge column to match database column
     grid_merge_df = grid_merge_df.rename(columns={
-        'Library Plate Label': 'Plate_Barcode'  # Map to database column name
+        'Library Plate Label': 'Plate_Barcode'
     })
     
-    # Perform the merge
+    # Perform the merge: master dataframe (left) with grid data (right)
+    # This preserves ALL master data, only adds grid data where available
     merged_df = pd.merge(
-        grid_merge_df,
-        db_merge_df,
+        master_plate_df,    # Left: ALL master plate data
+        grid_merge_df,      # Right: grid table data
         on=['Plate_Barcode', 'Well'],
-        how='inner',
-        suffixes=('_grid', '_db')
+        how='left',         # Keep all master data, add grid data where matches exist
+        suffixes=(None, '_y')  # Master gets no suffix, grid gets '_y'
     )
     
+    # Remove duplicate columns from grid table (they have '_y' suffix)
+    columns_to_remove = ['Well_y']  # Remove the duplicate Well column from grid table
+    
+    for col in columns_to_remove:
+        if col in merged_df.columns:
+            logger.info(f"Removing duplicate column: {col}")
+            merged_df = merged_df.drop(columns=[col])
+    
+    # Validate that expected samples got grid data
+    expected_sample_keys = set(zip(expected_samples['Plate_Barcode'], expected_samples['Well']))
+    
+    # Check which expected samples are missing grid data
+    missing_grid_data = []
+    for _, row in expected_samples.iterrows():
+        merged_row = merged_df[
+            (merged_df['Plate_Barcode'] == row['Plate_Barcode']) &
+            (merged_df['Well'] == row['Well'])
+        ]
+        if merged_row.empty or pd.isna(merged_row.iloc[0]['Nucleic Acid ID']):
+            missing_grid_data.append((row['Plate_Barcode'], row['Well']))
+    
     logger.info(f"Merge results:")
+    logger.info(f"  Master plate data rows: {len(master_plate_df)}")
+    logger.info(f"  Expected samples: {len(expected_samples)}")
     logger.info(f"  Grid table rows: {len(grid_df)}")
-    logger.info(f"  Database rows: {len(db_df)}")
-    logger.info(f"  Merged rows: {len(merged_df)}")
+    logger.info(f"  Final merged rows: {len(merged_df)}")
+    logger.info(f"  Expected samples missing grid data: {len(missing_grid_data)}")
     
-    if len(merged_df) == 0:
-        logger.warning("No matching records found between grid table and database!")
+    if missing_grid_data:
+        logger.error("Some expected samples are missing grid table data:")
+        for plate_barcode, well in missing_grid_data:
+            logger.error(f"  {plate_barcode} - {well}")
+        logger.error("SCRIPT TERMINATED: Incomplete merge - not all expected samples have grid data")
+        sys.exit()
     
+    logger.info("Perfect merge achieved - all expected samples have grid table data")
+    logger.info(f"Master dataframe updated with grid data for {len(expected_samples)} samples")
     return merged_df
-
-
-def identify_missing_samples(db_df, combined_grid_df):
-    """
-    Identify samples that are in the database but missing from grid tables.
-    Adapted from SPS version for ESP workflow.
-    """
-    logger.info("Identifying missing samples...")
-    
-    # Get unique plate/well combinations from each dataset
-    db_samples = set(zip(db_df['Plate_Barcode'], db_df['Well']))
-    grid_samples = set(zip(combined_grid_df['Library Plate Label'], combined_grid_df['Well']))
-    
-    # Find missing samples (in database but not in grid tables)
-    missing_samples = db_samples - grid_samples
-    
-    if missing_samples:
-        logger.warning(f"Found {len(missing_samples)} samples in database but missing from grid tables:")
-        for plate_barcode, well in missing_samples:
-            logger.warning(f"  {plate_barcode} - {well}")
-    else:
-        logger.info("No missing samples found")
-    
-    return missing_samples
 
 
 def create_smear_analysis_file(merged_df, output_dir):
     """
     Create the ESP smear analysis file for upload.
+    For now, output the entire merged dataframe for verification.
     """
     logger.info("Creating ESP smear analysis file...")
     
     if merged_df.empty:
-        logger.warning("No merged data available for smear analysis file")
-        return None
+        logger.error("No merged data available for smear analysis file")
+        logger.error("SCRIPT TERMINATED: Cannot create output file without merged data")
+        sys.exit()
     
     # Create output filename with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_filename = f"ESP_smear_analysis_{timestamp}.csv"
     output_path = Path(output_dir) / output_filename
     
-    # Select and rename columns for output
-    output_df = merged_df[[
-        'Nucleic Acid ID',
-        'Illumina Library', 
-        'Plate_Barcode',
-        'Well',
-        'Sample',
-        'ng/uL',
-        'Avg. Size',
-        'Passed_library',
-        'Source_File'
-    ]].copy()
-    
-    # Save the file
-    output_df.to_csv(output_path, index=False)
+    # Save the entire merged dataframe for verification
+    merged_df.to_csv(output_path, index=False)
     logger.info(f"ESP smear analysis file created: {output_path}")
+    logger.info(f"Output contains {len(merged_df)} rows and {len(merged_df.columns)} columns")
     
     return output_path
 
@@ -358,7 +510,11 @@ def main():
         
         # Read ESP database
         logger.info("Reading ESP project database...")
-        db_df = read_project_database(base_dir)
+        master_plate_df, individual_plates_df = read_project_database(base_dir)
+        
+        # Identify which samples should be in grid tables
+        logger.info("Identifying expected grid table samples...")
+        expected_samples, selected_plates = identify_expected_grid_samples(master_plate_df, individual_plates_df)
         
         # Find and read grid tables
         logger.info("Finding grid table files...")
@@ -371,16 +527,14 @@ def main():
         # Read and combine grid tables
         grid_dataframes, combined_grid_df = read_multiple_grid_tables(grid_table_files)
         
-        # Check for duplicates
-        duplicates = detect_duplicate_samples(grid_dataframes)
-        if duplicates:
-            logger.warning("Duplicate samples detected - review before proceeding")
+        # Check for duplicates (will exit if any found)
+        detect_duplicate_samples(grid_dataframes)
         
-        # Identify missing samples
-        missing_samples = identify_missing_samples(db_df, combined_grid_df)
+        # Validate grid table completeness
+        validate_grid_table_completeness(expected_samples, combined_grid_df)
         
-        # Merge data
-        merged_df = validate_and_merge_data(db_df, combined_grid_df)
+        # Merge data with perfect validation
+        merged_df = validate_and_merge_data(master_plate_df, expected_samples, combined_grid_df)
         
         # Create smear analysis file
         output_file = create_smear_analysis_file(merged_df, output_dir)
