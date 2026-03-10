@@ -29,17 +29,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def create_success_marker():
-    """Create success marker file for workflow manager integration."""
-    marker_file = Path("ESP_smear_analysis_SUCCESS.txt")
-    try:
-        with open(marker_file, 'w') as f:
-            f.write(f"ESP smear analysis completed successfully at {datetime.now()}\n")
-        logger.info(f"Success marker created: {marker_file}")
-    except Exception as e:
-        logger.error(f"Failed to create success marker: {e}")
-
-
 def read_project_database(base_dir):
     """Read the ESP project database from project_summary.db into pandas DataFrames."""
     db_path = Path(base_dir) / "project_summary.db"
@@ -488,8 +477,8 @@ def main():
     )
     parser.add_argument(
         "--output-dir",
-        default=".",
-        help="Output directory for smear analysis files (default: current directory)"
+        default=None,
+        help="Output directory for smear analysis files (default: base directory)"
     )
     
     args = parser.parse_args()
@@ -497,11 +486,17 @@ def main():
     try:
         logger.info("Starting ESP smear analysis file generation...")
         logger.info(f"Base directory: {args.base_dir}")
-        logger.info(f"Output directory: {args.output_dir}")
         
         # Validate directories
         base_dir = Path(args.base_dir)
-        output_dir = Path(args.output_dir)
+        
+        # Use base directory as default output directory if not specified
+        if args.output_dir is None:
+            output_dir = base_dir
+        else:
+            output_dir = Path(args.output_dir)
+            
+        logger.info(f"Output directory: {output_dir}")
         
         if not base_dir.exists():
             raise FileNotFoundError(f"Base directory not found: {base_dir}")
@@ -541,7 +536,6 @@ def main():
         
         if output_file:
             logger.info("ESP smear analysis file generation completed successfully!")
-            create_success_marker()
         else:
             logger.error("Failed to create smear analysis file")
             sys.exit(1)
