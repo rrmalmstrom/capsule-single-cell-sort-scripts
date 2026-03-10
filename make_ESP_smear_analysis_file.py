@@ -443,8 +443,10 @@ def validate_and_merge_data(master_plate_df, expected_samples, grid_df):
 
 def create_smear_analysis_file(merged_df, output_dir):
     """
-    Create the ESP smear analysis file for upload.
-    For now, output the entire merged dataframe for verification.
+    Create the ESP smear analysis file for upload in the proper ESP format.
+    
+    This function transforms the merged dataframe into the ESP smear file format
+    with the required 13 columns and proper data mapping.
     """
     logger.info("Creating ESP smear analysis file...")
     
@@ -453,17 +455,316 @@ def create_smear_analysis_file(merged_df, output_dir):
         logger.error("SCRIPT TERMINATED: Cannot create output file without merged data")
         sys.exit()
     
-    # Create output filename with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_filename = f"ESP_smear_analysis_{timestamp}.csv"
-    output_path = Path(output_dir) / output_filename
+    # Filter to only samples that have grid table data (expected samples)
+    # These are the samples that should appear in the smear file
+    grid_samples = merged_df[merged_df['Nucleic Acid ID'].notna()].copy()
     
-    # Save the entire merged dataframe for verification
-    merged_df.to_csv(output_path, index=False)
-    logger.info(f"ESP smear analysis file created: {output_path}")
-    logger.info(f"Output contains {len(merged_df)} rows and {len(merged_df.columns)} columns")
+    if grid_samples.empty:
+        logger.error("No samples with grid table data found for smear analysis file")
+        logger.error("SCRIPT TERMINATED: Cannot create smear file without grid table samples")
+        sys.exit()
     
-    return output_path
+    logger.info(f"Creating smear file for {len(grid_samples)} samples with grid table data")
+    
+    # Create smear_df with the required ESP format columns
+    # Map from merged dataframe columns to ESP format columns
+    smear_df = pd.DataFrame()
+    
+    # Required column mappings based on user specifications:
+    # ESP Format -> Source Column
+    smear_df['Well'] = grid_samples['Well']
+    smear_df['Sample ID'] = grid_samples['Illumina Library']
+    smear_df['Range'] = '400 bp to 800 bp'  # Fixed value
+    smear_df['ng/uL'] = grid_samples['ng/uL']
+    smear_df['%Total'] = 15  # Fixed value
+    smear_df['nmole/L'] = grid_samples['nmole/L']
+    smear_df['Avg. Size'] = grid_samples['Avg. Size']
+    smear_df['%CV'] = 20  # Fixed value
+    smear_df['Volume uL'] = 20  # Fixed value
+    smear_df['QC Result'] = 'Pass'  # Always Pass per user specification
+    smear_df['Failure Mode'] = ''  # Always empty per user specification
+    smear_df['Index Name'] = grid_samples['Index_Name']
+    smear_df['PCR Cycles'] = 12  # Fixed value
+    
+    # Validate that we have all required columns
+    expected_columns = ['Well', 'Sample ID', 'Range', 'ng/uL', '%Total', 'nmole/L',
+                       'Avg. Size', '%CV', 'Volume uL', 'QC Result', 'Failure Mode',
+                       'Index Name', 'PCR Cycles']
+    
+    missing_columns = [col for col in expected_columns if col not in smear_df.columns]
+    if missing_columns:
+        logger.error(f"Missing required ESP format columns: {missing_columns}")
+        logger.error("SCRIPT TERMINATED: Cannot create complete ESP smear file")
+        sys.exit()
+    
+    # Ensure column order matches ESP format
+    smear_df = smear_df[expected_columns]
+    
+    # Get unique Library Plate Container Barcodes for file naming
+    # Use Library Plate Container Barcode from grid table for file naming
+    unique_plates = grid_samples['Library Plate Container Barcode'].unique()
+    
+    logger.info(f"Found {len(unique_plates)} unique Library Plate Container Barcodes: {list(unique_plates)}")
+    
+    # Create the ESP smear file output directory
+    esp_smear_dir = Path(output_dir) / "4_plate_selection_and_pooling" / "B_smear_file_for_ESP_upload"
+    esp_smear_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Created ESP smear file directory: {esp_smear_dir}")
+    
+    # Create separate files for each unique Library Plate Container Barcode
+    output_files = []
+    for plate_barcode in unique_plates:
+        # Filter data for current plate barcode
+        plate_samples = grid_samples[grid_samples['Library Plate Container Barcode'] == plate_barcode]
+        plate_smear_df = smear_df[grid_samples['Library Plate Container Barcode'] == plate_barcode].copy()
+        
+        # Create filename with Library Plate Container Barcode
+        output_filename = f'ESP_smear_file_for_upload_{plate_barcode}.csv'
+        output_path = esp_smear_dir / output_filename
+        
+        # Export plate-specific data to CSV file
+        plate_smear_df.to_csv(output_path, index=False)
+        output_files.append(output_path)
+        
+        logger.info(f"✓ Created ESP smear file: {output_path} ({len(plate_smear_df)} rows)")
+        logger.info(f"  Library Plate Container Barcode: {plate_barcode}")
+        logger.info(f"  Samples: {len(plate_smear_df)}")
+    
+    logger.info(f"ESP smear analysis file generation completed successfully!")
+    logger.info(f"Created {len(output_files)} ESP smear files")
+    
+    return output_files
+
+
+def archive_grid_table_files(base_dir, grid_table_files):
+    """
+    Create 'previously_processed_grid_files' folder and move all grid table files there.
+    
+    Args:
+        base_dir (Path): Base directory containing the 4_plate_selection_and_pooling folder
+        grid_table_files (list): List of grid table file paths to move
+    """
+    logger.info("Archiving processed grid table files...")
+    
+    # Create the archive directory
+    archive_dir = Path(base_dir) / "4_plate_selection_and_pooling" / "previously_processed_grid_files"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Created archive directory: {archive_dir}")
+    
+    # Move each grid table file to the archive directory
+    moved_files = []
+    for grid_file_path in grid_table_files:
+        grid_file = Path(grid_file_path)
+        if grid_file.exists():
+            # Create destination path in archive directory
+            dest_path = archive_dir / grid_file.name
+            
+            # Move the file
+            grid_file.rename(dest_path)
+            moved_files.append(dest_path)
+            logger.info(f"✓ Moved grid table file: {grid_file.name} → {dest_path}")
+        else:
+            logger.warning(f"Grid table file not found for archiving: {grid_file_path}")
+    
+    logger.info(f"Successfully archived {len(moved_files)} grid table files to: {archive_dir}")
+    return moved_files
+
+
+def archive_database_file(base_dir):
+    """
+    Archive existing database file with timestamp suffix by copying (not moving).
+    Follows the capsule_fa_analysis.py copy-for-archive pattern for safer database handling.
+    """
+    db_path = Path(base_dir) / "project_summary.db"
+    
+    # Archive existing database file if it exists
+    if db_path.exists():
+        timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
+        archive_dir = Path(base_dir) / "archived_files"
+        archive_dir.mkdir(exist_ok=True)
+        
+        # Create archive name with timestamp suffix
+        stem = db_path.stem  # "project_summary"
+        suffix = db_path.suffix  # ".db"
+        archive_name = f"{stem}_{timestamp}{suffix}"
+        archive_path = archive_dir / archive_name
+        
+        # Copy instead of move to preserve original for in-place updates
+        import shutil
+        shutil.copy2(str(db_path), str(archive_path))
+        logger.info(f"📁 Archived database: {archive_path}")
+        return archive_path
+    return None
+
+
+def update_individual_plates_with_esp_status(base_dir, processed_plate_barcodes, batch_id):
+    """
+    Update individual_plates table to mark plates that generated ESP files.
+    Uses SQL UPDATE approach for better performance, following capsule_fa_analysis.py pattern.
+    
+    Args:
+        base_dir: Base directory containing the database
+        processed_plate_barcodes: List of plate barcodes that generated ESP files
+        batch_id: Batch ID for this processing run
+    """
+    if not processed_plate_barcodes:
+        return
+    
+    sql_db_path = Path(base_dir) / 'project_summary.db'
+    
+    try:
+        from sqlalchemy import create_engine, text
+        engine = create_engine(f'sqlite:///{sql_db_path}')
+        timestamp = datetime.now().isoformat()
+        
+        with engine.connect() as conn:
+            # First, ensure the ESP tracking columns exist
+            result = conn.execute(text("PRAGMA table_info(individual_plates)"))
+            existing_columns = [row[1] for row in result]
+            
+            # Add missing columns if they don't exist
+            if 'esp_generation_status' not in existing_columns:
+                conn.execute(text("ALTER TABLE individual_plates ADD COLUMN esp_generation_status TEXT DEFAULT 'pending'"))
+                conn.commit()
+                logger.info("✅ Added esp_generation_status column to individual_plates")
+                
+            if 'esp_generated_timestamp' not in existing_columns:
+                conn.execute(text("ALTER TABLE individual_plates ADD COLUMN esp_generated_timestamp TEXT"))
+                conn.commit()
+                logger.info("✅ Added esp_generated_timestamp column to individual_plates")
+                
+            if 'esp_batch_id' not in existing_columns:
+                conn.execute(text("ALTER TABLE individual_plates ADD COLUMN esp_batch_id TEXT"))
+                conn.commit()
+                logger.info("✅ Added esp_batch_id column to individual_plates")
+            
+            # Use SQL UPDATE for efficient in-place updates
+            for barcode in processed_plate_barcodes:
+                update_query = text("""
+                    UPDATE individual_plates
+                    SET esp_generation_status = :status,
+                        esp_generated_timestamp = :timestamp,
+                        esp_batch_id = :batch_id
+                    WHERE barcode = :barcode
+                """)
+                
+                conn.execute(update_query, {
+                    'status': 'generated',
+                    'timestamp': timestamp,
+                    'batch_id': batch_id,
+                    'barcode': barcode
+                })
+            
+            # Commit all updates
+            conn.commit()
+        
+        logger.info(f"✅ Updated individual_plates table: marked {len(processed_plate_barcodes)} plates as ESP generated")
+        
+    except Exception as e:
+        logger.error(f"❌ Error updating individual_plates table: {e}")
+        raise
+    finally:
+        engine.dispose()
+
+
+def update_master_plate_data_table(base_dir, merged_df):
+    """
+    Replace master_plate_data table with the merged dataframe.
+    Follows the capsule_fa_analysis.py pattern for complete table replacement.
+    
+    Args:
+        base_dir: Base directory containing the database
+        merged_df: Updated master plate data DataFrame with grid table information
+    """
+    sql_db_path = Path(base_dir) / 'project_summary.db'
+    
+    try:
+        from sqlalchemy import create_engine
+        engine = create_engine(f'sqlite:///{sql_db_path}')
+        
+        # Replace master_plate_data table with updated data
+        merged_df.to_sql('master_plate_data', engine, if_exists='replace', index=False)
+        
+        logger.info(f"✅ Updated master_plate_data table with grid table information")
+        logger.info(f"   Total rows in updated table: {len(merged_df)}")
+        
+    except Exception as e:
+        logger.error(f"❌ Error updating master_plate_data table: {e}")
+        raise
+    finally:
+        engine.dispose()
+
+
+def archive_csv_files(base_dir):
+    """
+    Archive existing CSV files with timestamp suffix by moving them.
+    Follows the capsule_fa_analysis.py pattern.
+    
+    Args:
+        base_dir: Base directory containing the CSV files
+        
+    Returns:
+        dict: Paths to archived files
+    """
+    timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
+    archive_dir = Path(base_dir) / "archived_files"
+    archive_dir.mkdir(exist_ok=True)
+    
+    archived_files = {}
+    
+    # Archive master_plate_data.csv
+    master_csv_path = Path(base_dir) / "master_plate_data.csv"
+    if master_csv_path.exists():
+        archive_name = f"master_plate_data_{timestamp}.csv"
+        archive_path = archive_dir / archive_name
+        import shutil
+        shutil.move(str(master_csv_path), str(archive_path))
+        archived_files['master_plate_data'] = archive_path
+        logger.info(f"📁 Archived CSV: {archive_path}")
+    
+    # Archive individual_plates.csv
+    plates_csv_path = Path(base_dir) / "individual_plates.csv"
+    if plates_csv_path.exists():
+        archive_name = f"individual_plates_{timestamp}.csv"
+        archive_path = archive_dir / archive_name
+        import shutil
+        shutil.move(str(plates_csv_path), str(archive_path))
+        archived_files['individual_plates'] = archive_path
+        logger.info(f"📁 Archived CSV: {archive_path}")
+    
+    return archived_files
+
+
+def generate_fresh_csv_files(base_dir, updated_master_df):
+    """
+    Generate fresh CSV files from updated database tables.
+    Follows the capsule_fa_analysis.py pattern.
+    
+    Args:
+        base_dir: Base directory to save CSV files
+        updated_master_df: Updated master plate data DataFrame
+    """
+    try:
+        # Generate fresh master_plate_data.csv
+        master_csv_path = Path(base_dir) / "master_plate_data.csv"
+        updated_master_df.to_csv(master_csv_path, index=False)
+        logger.info(f"✅ Generated fresh master_plate_data.csv with {len(updated_master_df)} rows")
+        
+        # Generate fresh individual_plates.csv from database
+        sql_db_path = Path(base_dir) / 'project_summary.db'
+        from sqlalchemy import create_engine
+        engine = create_engine(f'sqlite:///{sql_db_path}')
+        individual_plates_df = pd.read_sql('SELECT * FROM individual_plates', engine)
+        engine.dispose()
+        
+        # Include ALL columns from the SQL table in the CSV file
+        plates_csv_path = Path(base_dir) / "individual_plates.csv"
+        individual_plates_df.to_csv(plates_csv_path, index=False)
+        logger.info(f"✅ Generated fresh individual_plates.csv with {len(individual_plates_df)} rows and {len(individual_plates_df.columns)} columns")
+        
+    except Exception as e:
+        logger.error(f"❌ Error generating fresh CSV files: {e}")
+        raise
 
 
 def main():
@@ -491,12 +792,14 @@ def main():
         base_dir = Path(args.base_dir)
         
         # Use base directory as default output directory if not specified
+        # The ESP smear files will be created in base_dir/4_plate_selection_and_pooling/B_smear_file_for_ESP_upload/
         if args.output_dir is None:
             output_dir = base_dir
         else:
             output_dir = Path(args.output_dir)
             
-        logger.info(f"Output directory: {output_dir}")
+        logger.info(f"Base output directory: {output_dir}")
+        logger.info(f"ESP smear files will be created in: {output_dir}/4_plate_selection_and_pooling/B_smear_file_for_ESP_upload/")
         
         if not base_dir.exists():
             raise FileNotFoundError(f"Base directory not found: {base_dir}")
@@ -517,7 +820,7 @@ def main():
         
         if not grid_table_files:
             logger.error("No valid grid table files found!")
-            sys.exit(1)
+            sys.exit()
         
         # Read and combine grid tables
         grid_dataframes, combined_grid_df = read_multiple_grid_tables(grid_table_files)
@@ -532,17 +835,50 @@ def main():
         merged_df = validate_and_merge_data(master_plate_df, expected_samples, combined_grid_df)
         
         # Create smear analysis file
-        output_file = create_smear_analysis_file(merged_df, output_dir)
+        output_files = create_smear_analysis_file(merged_df, output_dir)
         
-        if output_file:
+        if output_files:
             logger.info("ESP smear analysis file generation completed successfully!")
+            logger.info(f"Generated {len(output_files)} ESP smear files:")
+            for file_path in output_files:
+                logger.info(f"  - {file_path}")
+            
+            # Archive the processed grid table files
+            archive_grid_table_files(base_dir, grid_table_files)
+            
+            # Database and CSV file updates following capsule_fa_analysis.py pattern
+            logger.info("Updating database and CSV files...")
+            
+            # Step 1: Archive existing database file
+            archive_database_file(base_dir)
+            
+            # Step 2: Get unique plate barcodes that generated ESP files
+            # Filter to only samples that have grid table data
+            grid_samples = merged_df[merged_df['Nucleic Acid ID'].notna()].copy()
+            # Use the original Plate_Barcode (XUPVQ-X) not the Library Plate Container Barcode (27-XXXXX)
+            # because individual_plates table uses XUPVQ-X format barcodes
+            processed_plate_barcodes = list(grid_samples['Plate_Barcode'].unique())
+            batch_id = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
+            
+            # Step 3: Update individual_plates table with ESP generation status
+            update_individual_plates_with_esp_status(base_dir, processed_plate_barcodes, batch_id)
+            
+            # Step 4: Update master_plate_data table with merged dataframe
+            update_master_plate_data_table(base_dir, merged_df)
+            
+            # Step 5: Archive existing CSV files and generate fresh ones
+            archive_csv_files(base_dir)
+            generate_fresh_csv_files(base_dir, merged_df)
+            
+            logger.info("Database and CSV file updates completed successfully!")
+            
         else:
             logger.error("Failed to create smear analysis file")
-            sys.exit(1)
+            sys.exit()
             
     except Exception as e:
         logger.error(f"ESP smear analysis generation failed: {e}")
-        sys.exit(1)
+        sys.exit()
 
 
 if __name__ == "__main__":
