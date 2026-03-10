@@ -866,6 +866,7 @@ def archive_database_and_csv_files():
 def regenerate_csv_files():
     """
     Generate fresh CSV files from updated database tables.
+    Uses ALL available columns from the SQL tables.
     """
     db_path = Path("project_summary.db")
     
@@ -878,9 +879,10 @@ def regenerate_csv_files():
         print(f"✅ Regenerated master_plate_data.csv with {len(master_plate_data_df)} records")
 
         # Regenerate individual_plates.csv from individual_plates table
+        # Use ALL columns from the individual_plates table to ensure any new columns added over time are included
         individual_plates_df = pd.read_sql('SELECT * FROM individual_plates', engine)
         individual_plates_df.to_csv('individual_plates.csv', index=False)
-        print(f"✅ Regenerated individual_plates.csv with {len(individual_plates_df)} records")
+        print(f"✅ Regenerated individual_plates.csv with {len(individual_plates_df)} records and {len(individual_plates_df.columns)} columns")
         
         engine.dispose()
         

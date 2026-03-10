@@ -1048,6 +1048,7 @@ def archive_plate_names_csv_file():
 def generate_plate_names_csv_from_database():
     """
     Generate fresh individual_plates.csv from updated individual_plates table.
+    Uses ALL available columns from the SQL table.
     """
     try:
         # Read individual_plates table from database
@@ -1056,18 +1057,16 @@ def generate_plate_names_csv_from_database():
         individual_plates_df = pd.read_sql('SELECT * FROM individual_plates', engine)
         engine.dispose()
         
-        # Select only the columns that should be in individual_plates.csv
-        # (excluding FA tracking columns)
-        plate_names_columns = ['plate_name', 'project', 'sample', 'plate_number', 'is_custom', 'barcode', 'created_timestamp']
-        plate_names_df = individual_plates_df[plate_names_columns].copy()
+        # Use ALL columns from the individual_plates table
+        # This ensures that any new columns added over time are included
         
-        # Generate fresh individual_plates.csv
+        # Generate fresh individual_plates.csv with all available columns
         output_filename = "individual_plates.csv"
-        plate_names_df.to_csv(output_filename, index=False)
+        individual_plates_df.to_csv(output_filename, index=False)
         
-        print(f"✅ Generated fresh {output_filename} with {len(plate_names_df)} rows")
+        print(f"✅ Generated fresh {output_filename} with {len(individual_plates_df)} rows and {len(individual_plates_df.columns)} columns")
         
-        return plate_names_df
+        return individual_plates_df
         
     except Exception as e:
         print(f"❌ ERROR: Could not generate individual_plates.csv: {e}")

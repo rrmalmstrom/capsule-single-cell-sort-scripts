@@ -1686,6 +1686,7 @@ def update_individual_plates_with_layout_info(engine, layout_detection_results):
 def archive_and_regenerate_plate_names_csv():
     """
     Archive existing individual_plates.csv file and regenerate it from the updated database.
+    Uses ALL available columns from the SQL table.
     Follows the same archiving pattern as other files in the system.
     """
     # Step 1: Archive existing individual_plates.csv if it exists
@@ -1716,13 +1717,14 @@ def archive_and_regenerate_plate_names_csv():
     try:
         engine = create_engine(f'sqlite:///{db_path}')
         
-        # Read the updated individual_plates table
+        # Read the updated individual_plates table with ALL columns
+        # This ensures that any new columns added over time are included
         individual_plates_df = pd.read_sql('SELECT * FROM individual_plates', engine)
         engine.dispose()
         
-        # Generate fresh individual_plates.csv with all columns including upper_left_registration
+        # Generate fresh individual_plates.csv with ALL available columns
         individual_plates_df.to_csv('individual_plates.csv', index=False)
-        print("✅ Regenerated individual_plates.csv with layout information")
+        print(f"✅ Regenerated individual_plates.csv with {len(individual_plates_df.columns)} columns including layout information")
 
     except Exception as e:
         print(f"FATAL ERROR: Could not regenerate individual_plates.csv: {e}")

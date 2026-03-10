@@ -1115,15 +1115,17 @@ def archive_csv_file(csv_file_path, folders):
 def create_updated_csv_files(sample_metadata_df, individual_plates_df):
     """
     Create updated CSV files from current DataFrames.
+    Uses ALL available columns from the DataFrames.
     
     Args:
         sample_metadata_df (pd.DataFrame): Sample metadata DataFrame
         individual_plates_df (pd.DataFrame): Individual plates DataFrame
     """
-    # Create new sample_metadata.csv
+    # Create new sample_metadata.csv with all columns
     sample_metadata_df.to_csv('sample_metadata.csv', index=False)
+    # Create new individual_plates.csv with ALL columns to ensure any new columns added over time are included
     individual_plates_df.to_csv('individual_plates.csv', index=False)
-    # CSV files updated
+    # CSV files updated with all available columns
 
 
 def manage_csv_files(sample_metadata_df, individual_plates_df, folders):
