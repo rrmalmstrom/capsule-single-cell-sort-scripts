@@ -10,6 +10,11 @@ Key differences from SPS:
 - Uses 'master_plate_data' table instead of CSV files
 - Merges on ['Library Plate Label', 'Well'] ↔ ['Plate_Barcode', 'Well']
 - Functional programming approach (not object-oriented)
+
+Recent Updates:
+- Added Library Plate Container Barcode extraction from grid tables
+- Enhanced individual_plates table with library_plate_container_barcode column
+- Establishes one-to-one mapping: individual_plates.barcode ↔ grid_table.Library Plate Container Barcode
 """
 
 import os
@@ -597,15 +602,41 @@ def archive_database_file(base_dir):
     return None
 
 
-def update_individual_plates_with_esp_status(base_dir, processed_plate_barcodes, batch_id):
+def extract_library_plate_container_barcode_mapping(combined_grid_df):
     """
-    Update individual_plates table to mark plates that generated ESP files.
+    Extract mapping from Library Plate Label to Library Plate Container Barcode from grid tables.
+    
+    Args:
+        combined_grid_df: Combined dataframe from all grid tables
+        
+    Returns:
+        dict: Mapping of Library Plate Label (e.g., 'XUPVQ-1') to Library Plate Container Barcode (e.g., '27-810254')
+    """
+    logger.info("Extracting Library Plate Container Barcode mapping from grid tables...")
+    
+    # Get unique mappings from grid table
+    mapping_df = combined_grid_df[['Library Plate Label', 'Library Plate Container Barcode']].drop_duplicates()
+    
+    # Convert to dictionary
+    barcode_mapping = dict(zip(mapping_df['Library Plate Label'], mapping_df['Library Plate Container Barcode']))
+    
+    logger.info(f"Found Library Plate Container Barcode mappings for {len(barcode_mapping)} plates:")
+    for plate_label, container_barcode in barcode_mapping.items():
+        logger.info(f"  {plate_label} → {container_barcode}")
+    
+    return barcode_mapping
+
+
+def update_individual_plates_with_esp_status(base_dir, processed_plate_barcodes, batch_id, barcode_mapping=None):
+    """
+    Update individual_plates table to mark plates that generated ESP files and add Library Plate Container Barcode.
     Uses SQL UPDATE approach for better performance, following capsule_fa_analysis.py pattern.
     
     Args:
         base_dir: Base directory containing the database
         processed_plate_barcodes: List of plate barcodes that generated ESP files
         batch_id: Batch ID for this processing run
+        barcode_mapping: Dict mapping plate barcode (e.g., 'XUPVQ-1') to Library Plate Container Barcode (e.g., '27-810254')
     """
     if not processed_plate_barcodes:
         return
@@ -637,14 +668,23 @@ def update_individual_plates_with_esp_status(base_dir, processed_plate_barcodes,
                 conn.execute(text("ALTER TABLE individual_plates ADD COLUMN esp_batch_id TEXT"))
                 conn.commit()
                 logger.info("✅ Added esp_batch_id column to individual_plates")
+                
+            if 'library_plate_container_barcode' not in existing_columns:
+                conn.execute(text("ALTER TABLE individual_plates ADD COLUMN library_plate_container_barcode TEXT"))
+                conn.commit()
+                logger.info("✅ Added library_plate_container_barcode column to individual_plates")
             
             # Use SQL UPDATE for efficient in-place updates
             for barcode in processed_plate_barcodes:
+                # Get the Library Plate Container Barcode for this plate
+                container_barcode = barcode_mapping.get(barcode) if barcode_mapping else None
+                
                 update_query = text("""
                     UPDATE individual_plates
                     SET esp_generation_status = :status,
                         esp_generated_timestamp = :timestamp,
-                        esp_batch_id = :batch_id
+                        esp_batch_id = :batch_id,
+                        library_plate_container_barcode = :container_barcode
                     WHERE barcode = :barcode
                 """)
                 
@@ -652,8 +692,14 @@ def update_individual_plates_with_esp_status(base_dir, processed_plate_barcodes,
                     'status': 'generated',
                     'timestamp': timestamp,
                     'batch_id': batch_id,
-                    'barcode': barcode
+                    'barcode': barcode,
+                    'container_barcode': container_barcode
                 })
+                
+                if container_barcode:
+                    logger.info(f"✅ Updated plate {barcode} with Library Plate Container Barcode: {container_barcode}")
+                else:
+                    logger.warning(f"⚠️ No Library Plate Container Barcode found for plate {barcode}")
             
             # Commit all updates
             conn.commit()
@@ -834,7 +880,7 @@ def main():
             # Step 1: Archive existing database file
             archive_database_file(base_dir)
             
-            # Step 2: Get unique plate barcodes that generated ESP files
+            # Step 2: Get unique plate barcodes that generated ESP files and extract barcode mapping
             # Filter to only samples that have grid table data
             grid_samples = merged_df[merged_df['Nucleic Acid ID'].notna()].copy()
             # Use the original Plate_Barcode (XUPVQ-X) not the Library Plate Container Barcode (27-XXXXX)
@@ -842,8 +888,11 @@ def main():
             processed_plate_barcodes = list(grid_samples['Plate_Barcode'].unique())
             batch_id = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
             
-            # Step 3: Update individual_plates table with ESP generation status
-            update_individual_plates_with_esp_status(base_dir, processed_plate_barcodes, batch_id)
+            # Extract Library Plate Container Barcode mapping from grid tables
+            barcode_mapping = extract_library_plate_container_barcode_mapping(combined_grid_df)
+            
+            # Step 3: Update individual_plates table with ESP generation status and Library Plate Container Barcode
+            update_individual_plates_with_esp_status(base_dir, processed_plate_barcodes, batch_id, barcode_mapping)
             
             # Step 4: Update master_plate_data table with merged dataframe
             update_master_plate_data_table(base_dir, merged_df)
