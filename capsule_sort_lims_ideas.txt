@@ -1,13 +1,32 @@
 
 
-FA analysis now needs to be set up to be able to rerun when there are new plates added and rework been done
 
+
+##########
+for workflow manager
+############
 
 Eventually need to relocate the standard_plate_layout.txt file when using teh workflow manager. It should be in. the same folder as the python scripts repo, not the project folder.
 
 Need to add successful completeion marker code to all scripts for workflow manager
 
 generate descriptive .md file for each script as well as a master overview for whole workflow.
+
+
+
+
+#########
+pooling
+########
+
+For standard pooling,  384 a plate is pooled first by quadrants into a single 96 well plate, then pool row wise to make eight mini pools. After creating the mini pools, the Hamilton method would add beads for a bead concentration and purification, then transfer each of the cleaned mini pools into a single tube.
+
+We could add a module for a user to provide a custom pooling strategy but I'd have to think about that at a later stage.
+
+The outputs would have to be a transfer file for the Hamilton that would stamp out the 9612 quadrants. It would need source and destination barcodes and well positions. We might need a second plate to do the 96 plate condensing and bead barcoding so I would work on that with Berkeley.
+
+The script needs to generate barcodes for the condensed cooling plate, which would really just have the same barcode as the source plate but with some prefix like P or a pool.
+
 
 
 
