@@ -33,6 +33,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Global flag for quiet mode
+QUIET_MODE = False
+
+def log_info(message):
+    """Log info message only if not in quiet mode."""
+    if not QUIET_MODE:
+        logger.info(message)
+
+def log_essential(message):
+    """Log essential messages even in quiet mode."""
+    if QUIET_MODE:
+        # In quiet mode, print without timestamp/level formatting
+        print(message)
+    else:
+        logger.info(message)
+
 
 def read_project_database(base_dir):
     """Read the ESP project database from project_summary.db into pandas DataFrames."""
@@ -46,13 +62,13 @@ def read_project_database(base_dir):
         
         # Read master_plate_data table
         master_plate_df = pd.read_sql_query("SELECT * FROM master_plate_data", conn)
-        logger.info(f"Successfully read master_plate_data with {len(master_plate_df)} records")
-        logger.info(f"Master plate data columns: {list(master_plate_df.columns)}")
+        log_info(f"Successfully read master_plate_data with {len(master_plate_df)} records")
+        log_info(f"Master plate data columns: {list(master_plate_df.columns)}")
         
         # Read individual_plates table
         individual_plates_df = pd.read_sql_query("SELECT * FROM individual_plates", conn)
-        logger.info(f"Successfully read individual_plates with {len(individual_plates_df)} records")
-        logger.info(f"Individual plates columns: {list(individual_plates_df.columns)}")
+        log_info(f"Successfully read individual_plates with {len(individual_plates_df)} records")
+        log_info(f"Individual plates columns: {list(individual_plates_df.columns)}")
         
         conn.close()
         
@@ -72,7 +88,7 @@ def identify_expected_grid_samples(master_plate_df, individual_plates_df):
     2. Find samples selected for pooling from master_plate_data table
     3. Return samples that meet both criteria
     """
-    logger.info("Identifying samples expected in grid tables...")
+    log_info("Identifying samples expected in grid tables...")
     
     # Check for required columns
     if 'selected_for_pooling' not in individual_plates_df.columns:
@@ -90,7 +106,7 @@ def identify_expected_grid_samples(master_plate_df, individual_plates_df):
         individual_plates_df['selected_for_pooling'] == True
     ]['barcode'].tolist()
     
-    logger.info(f"Found {len(selected_plates)} plates selected for pooling: {selected_plates}")
+    log_info(f"Found {len(selected_plates)} plates selected for pooling: {selected_plates}")
     
     # Get samples selected for pooling from selected plates
     expected_samples = master_plate_df[
@@ -98,8 +114,8 @@ def identify_expected_grid_samples(master_plate_df, individual_plates_df):
         (master_plate_df['Plate_Barcode'].isin(selected_plates))
     ].copy()
     
-    logger.info(f"Found {len(expected_samples)} samples expected in grid tables")
-    logger.info(f"Expected samples from plates: {expected_samples['Plate_Barcode'].unique().tolist()}")
+    log_info(f"Found {len(expected_samples)} samples expected in grid tables")
+    log_info(f"Expected samples from plates: {expected_samples['Plate_Barcode'].unique().tolist()}")
     
     if len(expected_samples) == 0:
         logger.error("No samples found that are selected for pooling from plates selected for pooling")
@@ -134,7 +150,7 @@ def find_csv_files(base_dir):
         
         for file_path in grid_table_dir.glob("*.csv"):
             csv_files.append(str(file_path))
-        logger.info(f"Found {len(csv_files)} CSV files in {grid_table_dir}")
+        log_info(f"Found {len(csv_files)} CSV files in {grid_table_dir}")
         return csv_files
     except Exception as e:
         logger.error(f"Error finding CSV files: {e}")
@@ -173,7 +189,7 @@ def find_all_grid_tables(base_dir):
         - Library Plate Container Barcode: Destination plate barcode
         - Nucleic Acid ID: Sample identifier
     """
-    logger.info("Scanning for grid table CSV files...")
+    log_info("Scanning for grid table CSV files...")
     
     # Find all CSV files in the grid table directory
     csv_files = find_csv_files(base_dir)
@@ -191,10 +207,10 @@ def find_all_grid_tables(base_dir):
         is_valid, error_msg = validate_grid_table_columns_detailed(csv_file)
         if is_valid:
             valid_files.append(csv_file)
-            logger.info(f"Valid grid table found: {Path(csv_file).name}")
+            log_info(f"Valid grid table found: {Path(csv_file).name}")
         else:
             invalid_files.append((csv_file, error_msg))
-            logger.info(f"Skipping non-grid table file: {Path(csv_file).name} - {error_msg}")
+            log_info(f"Skipping non-grid table file: {Path(csv_file).name} - {error_msg}")
     
     # Handle results
     if len(valid_files) == 0:
@@ -212,7 +228,7 @@ def find_all_grid_tables(base_dir):
         sys.exit()
     
     # Return all valid files
-    logger.info(f"Found {len(valid_files)} valid grid table file(s)")
+    log_info(f"Found {len(valid_files)} valid grid table file(s)")
     return valid_files
 
 
@@ -247,7 +263,7 @@ def read_multiple_grid_tables(grid_table_files):
     
     for filename in grid_table_files:
         grid_path = Path(filename)
-        logger.info(f"Processing grid table: {grid_path.name}")
+        log_info(f"Processing grid table: {grid_path.name}")
         
         try:
             # Read the grid table
@@ -265,7 +281,7 @@ def read_multiple_grid_tables(grid_table_files):
             else:
                 combined_grid_df = pd.concat([combined_grid_df, grid_df], ignore_index=True)
             
-            logger.info(f"Successfully processed {grid_path.name}: {len(grid_df)} rows")
+            log_info(f"Successfully processed {grid_path.name}: {len(grid_df)} rows")
             
         except Exception as e:
             logger.error(f"Error processing {filename}: {e}")
@@ -274,7 +290,7 @@ def read_multiple_grid_tables(grid_table_files):
     if combined_grid_df.empty:
         raise ValueError("No valid grid table data could be read")
     
-    logger.info(f"Combined grid table: {len(combined_grid_df)} total rows from {len(grid_dataframes)} files")
+    log_info(f"Combined grid table: {len(combined_grid_df)} total rows from {len(grid_dataframes)} files")
     
     return grid_dataframes, combined_grid_df
 
@@ -284,7 +300,7 @@ def detect_duplicate_samples(grid_dataframes):
     Detect duplicate samples across grid tables.
     Adapted from SPS version for ESP workflow.
     """
-    logger.info("Checking for duplicate samples across grid tables...")
+    log_info("Checking for duplicate samples across grid tables...")
     
     all_samples = []
     sample_sources = {}
@@ -313,7 +329,7 @@ def detect_duplicate_samples(grid_dataframes):
         logger.error("SCRIPT TERMINATED: Duplicate samples detected - data integrity compromised")
         sys.exit()
     else:
-        logger.info("No duplicate samples found")
+        log_info("No duplicate samples found")
         return {}
 
 
@@ -321,7 +337,7 @@ def validate_grid_table_completeness(expected_samples, combined_grid_df):
     """
     Validate that grid table contains exactly the expected samples (no more, no less).
     """
-    logger.info("Validating grid table completeness against expected samples...")
+    log_info("Validating grid table completeness against expected samples...")
     
     # Create sets for comparison using (Plate_Barcode, Well) tuples
     expected_set = set(zip(expected_samples['Plate_Barcode'], expected_samples['Well']))
@@ -333,11 +349,11 @@ def validate_grid_table_completeness(expected_samples, combined_grid_df):
     # Find unexpected samples (in grid but not expected)
     unexpected_in_grid = grid_set - expected_set
     
-    logger.info(f"Validation results:")
-    logger.info(f"  Expected samples: {len(expected_set)}")
-    logger.info(f"  Grid table samples: {len(grid_set)}")
-    logger.info(f"  Missing from grid: {len(missing_from_grid)}")
-    logger.info(f"  Unexpected in grid: {len(unexpected_in_grid)}")
+    log_info(f"Validation results:")
+    log_info(f"  Expected samples: {len(expected_set)}")
+    log_info(f"  Grid table samples: {len(grid_set)}")
+    log_info(f"  Missing from grid: {len(missing_from_grid)}")
+    log_info(f"  Unexpected in grid: {len(unexpected_in_grid)}")
     
     # Report missing samples
     if missing_from_grid:
@@ -355,7 +371,7 @@ def validate_grid_table_completeness(expected_samples, combined_grid_df):
         logger.error("SCRIPT TERMINATED: Grid tables contain samples not selected for pooling")
         sys.exit()
     
-    logger.info("Grid table validation passed - perfect match with expected samples")
+    log_info("Grid table validation passed - perfect match with expected samples")
     return True
 
 
@@ -368,7 +384,7 @@ def validate_and_merge_data(master_plate_df, expected_samples, grid_df):
     - Grid table: ['Library Plate Label', 'Well']
     - Master plate data: ['Plate_Barcode', 'Well']
     """
-    logger.info("Validating and merging grid table with master plate data...")
+    log_info("Validating and merging grid table with master plate data...")
     
     # Check required columns exist
     grid_merge_cols = ['Library Plate Label', 'Well']
@@ -427,12 +443,12 @@ def validate_and_merge_data(master_plate_df, expected_samples, grid_df):
         if merged_row.empty or pd.isna(merged_row.iloc[0]['Nucleic Acid ID']):
             missing_grid_data.append((row['Plate_Barcode'], row['Well']))
     
-    logger.info(f"Merge results:")
-    logger.info(f"  Master plate data rows: {len(master_plate_df)}")
-    logger.info(f"  Expected samples: {len(expected_samples)}")
-    logger.info(f"  Grid table rows: {len(grid_df)}")
-    logger.info(f"  Final merged rows: {len(merged_df)}")
-    logger.info(f"  Expected samples missing grid data: {len(missing_grid_data)}")
+    log_info(f"Merge results:")
+    log_info(f"  Master plate data rows: {len(master_plate_df)}")
+    log_info(f"  Expected samples: {len(expected_samples)}")
+    log_info(f"  Grid table rows: {len(grid_df)}")
+    log_info(f"  Final merged rows: {len(merged_df)}")
+    log_info(f"  Expected samples missing grid data: {len(missing_grid_data)}")
     
     if missing_grid_data:
         logger.error("Some expected samples are missing grid table data:")
@@ -441,8 +457,8 @@ def validate_and_merge_data(master_plate_df, expected_samples, grid_df):
         logger.error("SCRIPT TERMINATED: Incomplete merge - not all expected samples have grid data")
         sys.exit()
     
-    logger.info("Perfect merge achieved - all expected samples have grid table data")
-    logger.info(f"Master dataframe updated with grid data for {len(expected_samples)} samples")
+    log_info("Perfect merge achieved - all expected samples have grid table data")
+    log_info(f"Master dataframe updated with grid data for {len(expected_samples)} samples")
     return merged_df
 
 
@@ -453,7 +469,7 @@ def create_smear_analysis_file(merged_df, base_dir):
     This function transforms the merged dataframe into the ESP smear file format
     with the required 13 columns and proper data mapping.
     """
-    logger.info("Creating ESP smear analysis file...")
+    log_info("Creating ESP smear analysis file...")
     
     if merged_df.empty:
         logger.error("No merged data available for smear analysis file")
@@ -469,7 +485,7 @@ def create_smear_analysis_file(merged_df, base_dir):
         logger.error("SCRIPT TERMINATED: Cannot create smear file without grid table samples")
         sys.exit()
     
-    logger.info(f"Creating smear file for {len(grid_samples)} samples with grid table data")
+    log_info(f"Creating smear file for {len(grid_samples)} samples with grid table data")
     
     # Create smear_df with the required ESP format columns
     # Map from merged dataframe columns to ESP format columns
@@ -509,12 +525,12 @@ def create_smear_analysis_file(merged_df, base_dir):
     # Use Library Plate Container Barcode from grid table for file naming
     unique_plates = grid_samples['Library Plate Container Barcode'].unique()
     
-    logger.info(f"Found {len(unique_plates)} unique Library Plate Container Barcodes: {list(unique_plates)}")
+    log_info(f"Found {len(unique_plates)} unique Library Plate Container Barcodes: {list(unique_plates)}")
     
     # Create the ESP smear file output directory
     esp_smear_dir = Path(base_dir) / "4_plate_selection_and_pooling" / "B_smear_file_for_ESP_upload"
     esp_smear_dir.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Created ESP smear file directory: {esp_smear_dir}")
+    log_info(f"Created ESP smear file directory: {esp_smear_dir}")
     
     # Create separate files for each unique Library Plate Container Barcode
     output_files = []
@@ -531,12 +547,12 @@ def create_smear_analysis_file(merged_df, base_dir):
         plate_smear_df.to_csv(output_path, index=False)
         output_files.append(output_path)
         
-        logger.info(f"✓ Created ESP smear file: {output_path} ({len(plate_smear_df)} rows)")
-        logger.info(f"  Library Plate Container Barcode: {plate_barcode}")
-        logger.info(f"  Samples: {len(plate_smear_df)}")
+        log_info(f"✓ Created ESP smear file: {output_path} ({len(plate_smear_df)} rows)")
+        log_info(f"  Library Plate Container Barcode: {plate_barcode}")
+        log_info(f"  Samples: {len(plate_smear_df)}")
     
-    logger.info(f"ESP smear analysis file generation completed successfully!")
-    logger.info(f"Created {len(output_files)} ESP smear files")
+    log_info(f"ESP smear analysis file generation completed successfully!")
+    log_info(f"Created {len(output_files)} ESP smear files")
     
     return output_files
 
@@ -549,12 +565,12 @@ def archive_grid_table_files(base_dir, grid_table_files):
         base_dir (Path): Base directory containing the 4_plate_selection_and_pooling folder
         grid_table_files (list): List of grid table file paths to move
     """
-    logger.info("Archiving processed grid table files...")
+    log_info("Archiving processed grid table files...")
     
     # Create the archive directory
     archive_dir = Path(base_dir) / "4_plate_selection_and_pooling" / "previously_processed_grid_files"
     archive_dir.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Created archive directory: {archive_dir}")
+    log_info(f"Created archive directory: {archive_dir}")
     
     # Move each grid table file to the archive directory
     moved_files = []
@@ -567,11 +583,11 @@ def archive_grid_table_files(base_dir, grid_table_files):
             # Move the file
             grid_file.rename(dest_path)
             moved_files.append(dest_path)
-            logger.info(f"✓ Moved grid table file: {grid_file.name} → {dest_path}")
+            log_info(f"✓ Moved grid table file: {grid_file.name} → {dest_path}")
         else:
             logger.warning(f"Grid table file not found for archiving: {grid_file_path}")
     
-    logger.info(f"Successfully archived {len(moved_files)} grid table files to: {archive_dir}")
+    log_info(f"Successfully archived {len(moved_files)} grid table files to: {archive_dir}")
     return moved_files
 
 
@@ -597,7 +613,7 @@ def archive_database_file(base_dir):
         # Copy instead of move to preserve original for in-place updates
         import shutil
         shutil.copy2(str(db_path), str(archive_path))
-        logger.info(f"📁 Archived database: {archive_path}")
+        log_info(f"📁 Archived database: {archive_path}")
         return archive_path
     return None
 
@@ -612,7 +628,7 @@ def extract_library_plate_container_barcode_mapping(combined_grid_df):
     Returns:
         dict: Mapping of Library Plate Label (e.g., 'XUPVQ-1') to Library Plate Container Barcode (e.g., '27-810254')
     """
-    logger.info("Extracting Library Plate Container Barcode mapping from grid tables...")
+    log_info("Extracting Library Plate Container Barcode mapping from grid tables...")
     
     # Get unique mappings from grid table
     mapping_df = combined_grid_df[['Library Plate Label', 'Library Plate Container Barcode']].drop_duplicates()
@@ -620,9 +636,9 @@ def extract_library_plate_container_barcode_mapping(combined_grid_df):
     # Convert to dictionary
     barcode_mapping = dict(zip(mapping_df['Library Plate Label'], mapping_df['Library Plate Container Barcode']))
     
-    logger.info(f"Found Library Plate Container Barcode mappings for {len(barcode_mapping)} plates:")
+    log_info(f"Found Library Plate Container Barcode mappings for {len(barcode_mapping)} plates:")
     for plate_label, container_barcode in barcode_mapping.items():
-        logger.info(f"  {plate_label} → {container_barcode}")
+        log_info(f"  {plate_label} → {container_barcode}")
     
     return barcode_mapping
 
@@ -657,22 +673,22 @@ def update_individual_plates_with_esp_status(base_dir, processed_plate_barcodes,
             if 'esp_generation_status' not in existing_columns:
                 conn.execute(text("ALTER TABLE individual_plates ADD COLUMN esp_generation_status TEXT DEFAULT 'pending'"))
                 conn.commit()
-                logger.info("✅ Added esp_generation_status column to individual_plates")
+                log_info("✅ Added esp_generation_status column to individual_plates")
                 
             if 'esp_generated_timestamp' not in existing_columns:
                 conn.execute(text("ALTER TABLE individual_plates ADD COLUMN esp_generated_timestamp TEXT"))
                 conn.commit()
-                logger.info("✅ Added esp_generated_timestamp column to individual_plates")
+                log_info("✅ Added esp_generated_timestamp column to individual_plates")
                 
             if 'esp_batch_id' not in existing_columns:
                 conn.execute(text("ALTER TABLE individual_plates ADD COLUMN esp_batch_id TEXT"))
                 conn.commit()
-                logger.info("✅ Added esp_batch_id column to individual_plates")
+                log_info("✅ Added esp_batch_id column to individual_plates")
                 
             if 'library_plate_container_barcode' not in existing_columns:
                 conn.execute(text("ALTER TABLE individual_plates ADD COLUMN library_plate_container_barcode TEXT"))
                 conn.commit()
-                logger.info("✅ Added library_plate_container_barcode column to individual_plates")
+                log_info("✅ Added library_plate_container_barcode column to individual_plates")
             
             # Use SQL UPDATE for efficient in-place updates
             for barcode in processed_plate_barcodes:
@@ -697,14 +713,14 @@ def update_individual_plates_with_esp_status(base_dir, processed_plate_barcodes,
                 })
                 
                 if container_barcode:
-                    logger.info(f"✅ Updated plate {barcode} with Library Plate Container Barcode: {container_barcode}")
+                    log_info(f"✅ Updated plate {barcode} with Library Plate Container Barcode: {container_barcode}")
                 else:
                     logger.warning(f"⚠️ No Library Plate Container Barcode found for plate {barcode}")
             
             # Commit all updates
             conn.commit()
         
-        logger.info(f"✅ Updated individual_plates table: marked {len(processed_plate_barcodes)} plates as ESP generated")
+        log_info(f"✅ Updated individual_plates table: marked {len(processed_plate_barcodes)} plates as ESP generated")
         
     except Exception as e:
         logger.error(f"❌ Error updating individual_plates table: {e}")
@@ -731,8 +747,8 @@ def update_master_plate_data_table(base_dir, merged_df):
         # Replace master_plate_data table with updated data
         merged_df.to_sql('master_plate_data', engine, if_exists='replace', index=False)
         
-        logger.info(f"✅ Updated master_plate_data table with grid table information")
-        logger.info(f"   Total rows in updated table: {len(merged_df)}")
+        log_info(f"✅ Updated master_plate_data table with grid table information")
+        log_info(f"   Total rows in updated table: {len(merged_df)}")
         
     except Exception as e:
         logger.error(f"❌ Error updating master_plate_data table: {e}")
@@ -766,7 +782,7 @@ def archive_csv_files(base_dir):
         import shutil
         shutil.move(str(master_csv_path), str(archive_path))
         archived_files['master_plate_data'] = archive_path
-        logger.info(f"📁 Archived CSV: {archive_path}")
+        log_info(f"📁 Archived CSV: {archive_path}")
     
     # Archive individual_plates.csv
     plates_csv_path = Path(base_dir) / "individual_plates.csv"
@@ -776,7 +792,7 @@ def archive_csv_files(base_dir):
         import shutil
         shutil.move(str(plates_csv_path), str(archive_path))
         archived_files['individual_plates'] = archive_path
-        logger.info(f"📁 Archived CSV: {archive_path}")
+        log_info(f"📁 Archived CSV: {archive_path}")
     
     return archived_files
 
@@ -794,7 +810,7 @@ def generate_fresh_csv_files(base_dir, updated_master_df):
         # Generate fresh master_plate_data.csv
         master_csv_path = Path(base_dir) / "master_plate_data.csv"
         updated_master_df.to_csv(master_csv_path, index=False)
-        logger.info(f"✅ Generated fresh master_plate_data.csv with {len(updated_master_df)} rows")
+        log_info(f"✅ Generated fresh master_plate_data.csv with {len(updated_master_df)} rows")
         
         # Generate fresh individual_plates.csv from database
         sql_db_path = Path(base_dir) / 'project_summary.db'
@@ -806,7 +822,7 @@ def generate_fresh_csv_files(base_dir, updated_master_df):
         # Include ALL columns from the SQL table in the CSV file
         plates_csv_path = Path(base_dir) / "individual_plates.csv"
         individual_plates_df.to_csv(plates_csv_path, index=False)
-        logger.info(f"✅ Generated fresh individual_plates.csv with {len(individual_plates_df)} rows and {len(individual_plates_df.columns)} columns")
+        log_info(f"✅ Generated fresh individual_plates.csv with {len(individual_plates_df)} rows and {len(individual_plates_df.columns)} columns")
         
     except Exception as e:
         logger.error(f"❌ Error generating fresh CSV files: {e}")
@@ -818,32 +834,41 @@ def main():
     parser = argparse.ArgumentParser(
         description="Generate ESP smear analysis files from grid tables and database"
     )
+    parser.add_argument(
+        '--quiet', '-q',
+        action='store_true',
+        help='Reduce output to essential messages only (5-6 lines total)'
+    )
     
     args = parser.parse_args()
     
+    # Set global quiet mode
+    global QUIET_MODE
+    QUIET_MODE = args.quiet
+    
     try:
-        logger.info("Starting ESP smear analysis file generation...")
+        log_info("Starting ESP smear analysis file generation...")
         
         # Use current working directory as the base directory
         base_dir = Path.cwd()
-        logger.info(f"Base directory (current working directory): {base_dir}")
+        log_info(f"Base directory (current working directory): {base_dir}")
         
         # ESP smear files will always be created in base_dir/4_plate_selection_and_pooling/B_smear_file_for_ESP_upload/
-        logger.info(f"ESP smear files will be created in: {base_dir}/4_plate_selection_and_pooling/B_smear_file_for_ESP_upload/")
+        log_info(f"ESP smear files will be created in: {base_dir}/4_plate_selection_and_pooling/B_smear_file_for_ESP_upload/")
         
         if not base_dir.exists():
             raise FileNotFoundError(f"Base directory not found: {base_dir}")
         
         # Read ESP database
-        logger.info("Reading ESP project database...")
+        log_info("Reading ESP project database...")
         master_plate_df, individual_plates_df = read_project_database(base_dir)
         
         # Identify which samples should be in grid tables
-        logger.info("Identifying expected grid table samples...")
+        log_info("Identifying expected grid table samples...")
         expected_samples, selected_plates = identify_expected_grid_samples(master_plate_df, individual_plates_df)
         
         # Find and read grid tables
-        logger.info("Finding grid table files...")
+        log_info("Finding grid table files...")
         grid_table_files = find_all_grid_tables(base_dir)
         
         if not grid_table_files:
@@ -866,16 +891,16 @@ def main():
         output_files = create_smear_analysis_file(merged_df, base_dir)
         
         if output_files:
-            logger.info("ESP smear analysis file generation completed successfully!")
-            logger.info(f"Generated {len(output_files)} ESP smear files:")
+            log_essential(f"Generated {len(output_files)} ESP smear files successfully!")
+            log_info(f"ESP smear files created:")
             for file_path in output_files:
-                logger.info(f"  - {file_path}")
+                log_info(f"  - {file_path}")
             
             # Archive the processed grid table files
             archive_grid_table_files(base_dir, grid_table_files)
             
             # Database and CSV file updates following capsule_fa_analysis.py pattern
-            logger.info("Updating database and CSV files...")
+            log_info("Updating database and CSV files...")
             
             # Step 1: Archive existing database file
             archive_database_file(base_dir)
@@ -901,7 +926,7 @@ def main():
             archive_csv_files(base_dir)
             generate_fresh_csv_files(base_dir, merged_df)
             
-            logger.info("Database and CSV file updates completed successfully!")
+            log_essential("Database and CSV file updates completed successfully!")
             
         else:
             logger.error("Failed to create smear analysis file")
