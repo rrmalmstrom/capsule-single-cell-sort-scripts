@@ -441,7 +441,7 @@ def validate_and_merge_data(master_plate_df, expected_samples, grid_df):
     return merged_df
 
 
-def create_smear_analysis_file(merged_df, output_dir):
+def create_smear_analysis_file(merged_df, base_dir):
     """
     Create the ESP smear analysis file for upload in the proper ESP format.
     
@@ -507,7 +507,7 @@ def create_smear_analysis_file(merged_df, output_dir):
     logger.info(f"Found {len(unique_plates)} unique Library Plate Container Barcodes: {list(unique_plates)}")
     
     # Create the ESP smear file output directory
-    esp_smear_dir = Path(output_dir) / "4_plate_selection_and_pooling" / "B_smear_file_for_ESP_upload"
+    esp_smear_dir = Path(base_dir) / "4_plate_selection_and_pooling" / "B_smear_file_for_ESP_upload"
     esp_smear_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Created ESP smear file directory: {esp_smear_dir}")
     
@@ -772,39 +772,21 @@ def main():
     parser = argparse.ArgumentParser(
         description="Generate ESP smear analysis files from grid tables and database"
     )
-    parser.add_argument(
-        "base_dir",
-        help="Base directory containing grid table CSV files and project_summary.db"
-    )
-    parser.add_argument(
-        "--output-dir",
-        default=None,
-        help="Output directory for smear analysis files (default: base directory)"
-    )
     
     args = parser.parse_args()
     
     try:
         logger.info("Starting ESP smear analysis file generation...")
-        logger.info(f"Base directory: {args.base_dir}")
         
-        # Validate directories
-        base_dir = Path(args.base_dir)
+        # Use current working directory as the base directory
+        base_dir = Path.cwd()
+        logger.info(f"Base directory (current working directory): {base_dir}")
         
-        # Use base directory as default output directory if not specified
-        # The ESP smear files will be created in base_dir/4_plate_selection_and_pooling/B_smear_file_for_ESP_upload/
-        if args.output_dir is None:
-            output_dir = base_dir
-        else:
-            output_dir = Path(args.output_dir)
-            
-        logger.info(f"Base output directory: {output_dir}")
-        logger.info(f"ESP smear files will be created in: {output_dir}/4_plate_selection_and_pooling/B_smear_file_for_ESP_upload/")
+        # ESP smear files will always be created in base_dir/4_plate_selection_and_pooling/B_smear_file_for_ESP_upload/
+        logger.info(f"ESP smear files will be created in: {base_dir}/4_plate_selection_and_pooling/B_smear_file_for_ESP_upload/")
         
         if not base_dir.exists():
             raise FileNotFoundError(f"Base directory not found: {base_dir}")
-        
-        output_dir.mkdir(parents=True, exist_ok=True)
         
         # Read ESP database
         logger.info("Reading ESP project database...")
@@ -835,7 +817,7 @@ def main():
         merged_df = validate_and_merge_data(master_plate_df, expected_samples, combined_grid_df)
         
         # Create smear analysis file
-        output_files = create_smear_analysis_file(merged_df, output_dir)
+        output_files = create_smear_analysis_file(merged_df, base_dir)
         
         if output_files:
             logger.info("ESP smear analysis file generation completed successfully!")
