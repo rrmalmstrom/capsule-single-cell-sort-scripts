@@ -16,10 +16,28 @@ import sqlite3
 import shutil
 import openpyxl
 import os
+import sys
 import argparse
 from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple, Optional
+
+
+def create_success_marker():
+    """Create success marker file for workflow manager integration."""
+    script_name = Path(__file__).stem
+    status_dir = Path(".workflow_status")
+    status_dir.mkdir(exist_ok=True)
+    success_file = status_dir / f"{script_name}.success"
+
+    try:
+        with open(success_file, "w") as f:
+            f.write(f"SUCCESS: {script_name} completed at {datetime.now()}\n")
+        print(f"✅ Success marker created: {success_file}")
+    except Exception as e:
+        print(f"FATAL ERROR: Could not create success marker: {e}")
+        print("Laboratory automation requires workflow integration for safety.")
+        sys.exit()
 
 
 def get_pooling_plates_data(db_path: str) -> List[Tuple[str, str]]:
@@ -347,11 +365,14 @@ def main():
         if not output_path:
             print("⚠ No plates selected for pooling")
             return 1
-            
+
     except Exception as e:
         print(f"✗ Error: {e}")
         return 1
-    
+
+    # Create success marker for workflow manager
+    create_success_marker()
+
     return 0
 
 

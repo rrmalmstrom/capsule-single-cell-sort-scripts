@@ -956,28 +956,28 @@ def create_project_folder_structure():
         sys.exit()
 
 
-# def create_success_marker():
-#     """
-#     Create success marker file for workflow manager integration.
+def create_success_marker():
+    """
+    Create success marker file for workflow manager integration.
     
-#     Raises:
-#         SystemExit: If marker creation fails
-#     """
-#     try:
-#         script_name = Path(__file__).stem
-#         status_dir = Path(".workflow_status")
-#         status_dir.mkdir(exist_ok=True)
-#         success_file = status_dir / f"{script_name}.success"
+    Raises:
+        SystemExit: If marker creation fails
+    """
+    try:
+        script_name = Path(__file__).stem
+        status_dir = Path(".workflow_status")
+        status_dir.mkdir(exist_ok=True)
+        success_file = status_dir / f"{script_name}.success"
         
-#         with open(success_file, "w") as f:
-#             f.write(f"SUCCESS: {script_name} completed at {datetime.now()}\n")
+        with open(success_file, "w") as f:
+            f.write(f"SUCCESS: {script_name} completed at {datetime.now()}\n")
         
-#         print(f"✅ Success marker created: {success_file}")
+        print(f"✅ Success marker created: {success_file}")
         
-#     except Exception as e:
-#         print(f"FATAL ERROR: Could not create success marker: {e}")
-#         print("Laboratory automation requires workflow integration for safety.")
-#         sys.exit()
+    except Exception as e:
+        print(f"FATAL ERROR: Could not create success marker: {e}")
+        print("Laboratory automation requires workflow integration for safety.")
+        sys.exit()
 
 
 def archive_database_file(db_path, folders):
@@ -1483,8 +1483,8 @@ def main():
     # Print completion summary
     print_completion_summary(sample_df, final_plates_df, plates_df)
     
-    # # Create success marker for workflow manager
-    # create_success_marker()
+    # Create success marker for workflow manager
+    create_success_marker()
     
 
 if __name__ == "__main__":

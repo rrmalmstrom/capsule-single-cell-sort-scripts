@@ -72,21 +72,21 @@ from matplotlib.patches import Rectangle
 import os
 
 
-# def create_success_marker():
-#     """Create success marker file for workflow manager integration."""
-#     script_name = Path(__file__).stem
-#     status_dir = Path(".workflow_status")
-#     status_dir.mkdir(exist_ok=True)
-#     success_file = status_dir / f"{script_name}.success"
-    
-#     try:
-#         with open(success_file, "w") as f:
-#             f.write(f"SUCCESS: {script_name} completed at {datetime.now()}\n")
-#         print(f"✅ Success marker created: {success_file}")
-#     except Exception as e:
-#         print(f"❌ ERROR: Could not create success marker: {e}")
-#         print("Script failed - workflow manager integration requires success marker")
-#         sys.exit()
+def create_success_marker():
+    """Create success marker file for workflow manager integration."""
+    script_name = Path(__file__).stem
+    status_dir = Path(".workflow_status")
+    status_dir.mkdir(exist_ok=True)
+    success_file = status_dir / f"{script_name}.success"
+
+    try:
+        with open(success_file, "w") as f:
+            f.write(f"SUCCESS: {script_name} completed at {datetime.now()}\n")
+        print(f"✅ Success marker created: {success_file}")
+    except Exception as e:
+        print(f"❌ ERROR: Could not create success marker: {e}")
+        print("Script failed - workflow manager integration requires success marker")
+        sys.exit()
 
 
 # Define paths using pathlib strategy
@@ -1532,8 +1532,8 @@ def main():
     print(f"📊 Processed {len(fa_dest_plates)} plates in batch {batch_id}")
     print(f"✅ {len(status['processed_plates']) + len(fa_dest_plates)} total plates now have FA results")
     
-    # # Create success marker for workflow manager integration
-    # create_success_marker()
+    # Create success marker for workflow manager integration
+    create_success_marker()
 
 
 if __name__ == "__main__":

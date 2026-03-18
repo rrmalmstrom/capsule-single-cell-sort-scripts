@@ -80,6 +80,23 @@ from pathlib import Path
 from sqlalchemy import create_engine
 
 
+def create_success_marker():
+    """Create success marker file for workflow manager integration."""
+    script_name = Path(__file__).stem
+    status_dir = Path(".workflow_status")
+    status_dir.mkdir(exist_ok=True)
+    success_file = status_dir / f"{script_name}.success"
+
+    try:
+        with open(success_file, "w") as f:
+            f.write(f"SUCCESS: {script_name} completed at {datetime.now()}\n")
+        print(f"✅ Success marker created: {success_file}")
+    except Exception as e:
+        print(f"FATAL ERROR: Could not create success marker: {e}")
+        print("Laboratory automation requires workflow integration for safety.")
+        sys.exit()
+
+
 def read_database_tables():
     """
     Read the project_summary.db database and create DataFrames from the two tables.
@@ -2130,8 +2147,9 @@ def main():
     
     # Step 9: Move processed input files to organized directories
     move_processed_input_files(plate_list)
-    
-    # Script completed - no output needed
+
+    # Create success marker for workflow manager
+    create_success_marker()
 
 
 if __name__ == "__main__":
