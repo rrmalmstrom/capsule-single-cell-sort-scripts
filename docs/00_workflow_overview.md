@@ -2,7 +2,9 @@
 
 ## Executive Summary
 
-This laboratory workflow consists of **six Python scripts** that execute in sequence to process microwell plates from initial project setup through final pooling preparation. The workflow transforms sample metadata into a complete laboratory processing pipeline with quality control, selection logic, external system integration, and physical tracking materials.
+This laboratory workflow consists of **six Python scripts** that execute in sequence to process microwell plates from initial project setup through final pooling preparation. The workflow transforms sample metadata into a complete laboratory processing pipeline with quality control, selection logic, external system integration, barcode scanning verification, and ESP file generation.
+
+> **Workflow Update (March 2026)**: Scripts 5 and 6 have been refactored. The older scripts `make_ESP_smear_analysis_file.py` and `relabel_lib_plates_for_pooling.py` are **no longer used** and have been replaced by `process_grid_tables_and_generate_barcodes.py` and `verify_scanning_and_generate_ESP_files.py`. The key change is that barcode scanning verification now occurs **before** ESP file generation, adding a mandatory quality gate.
 
 ## Workflow Architecture
 
@@ -19,7 +21,7 @@ This laboratory workflow consists of **six Python scripts** that execute in sequ
 - **Structured directories**: Automatic creation of organized folder hierarchy
 - **Timestamped archiving**: All processed files preserved with timestamps
 - **Input/output separation**: Clear distinction between input files and generated outputs
-- **External integration**: Dedicated folders for external system file exchange
+- **External integration**: Dedicated folders for each processing stage
 
 ## Script Execution Sequence
 
@@ -80,32 +82,40 @@ This laboratory workflow consists of **six Python scripts** that execute in sequ
 - Selection status flags in database tables
 - Archived plate selection input file
 
-### 5. External System Integration
-**Script**: [`make_ESP_smear_analysis_file.py`](05_make_ESP_smear_analysis_file.md)
+### 5. Grid Processing + Barcode Generation *(Refactored)*
+**Script**: [`process_grid_tables_and_generate_barcodes.py`](05_process_grid_tables_and_generate_barcodes.md)
 
-**Purpose**: ESP file generation and grid table processing
+**Purpose**: Grid table processing, container barcode mapping, and barcode scanning material generation
 - Validates grid table completeness against selected samples
-- Creates ESP-compatible smear analysis files
-- Establishes library container barcode mapping
-- Updates database with external system identifiers
+- Extracts Library Plate Container Barcode mapping from grid tables
+- Updates database with container barcodes (`library_plate_container_barcode`)
+- Merges grid table data into `master_plate_data`
+- Generates Excel barcode scanning template (Column C populated with expected barcodes)
+- Generates BarTender file for container label printing
 
 **Key Outputs**:
-- ESP smear analysis files for external upload
-- Library container barcode mapping in database
-- Archived grid table files
+- Updated `individual_plates` with `library_plate_container_barcode`
+- Updated `master_plate_data` with grid table columns
+- Excel scanning template: `B_new_plate_barcode_labels/{proposal}_pool_label_scan_verificiation_tool.xlsx`
+- BarTender file: `B_new_plate_barcode_labels/BARTENDER_{proposal}_container_labels.txt`
+- Archived grid files in `previously_processed_grid_files/`
 
-### 6. Physical Labeling
-**Script**: [`relabel_lib_plates_for_pooling.py`](06_relabel_lib_plates_for_pooling.md)
+**→ Manual Step**: User opens Excel template, scans physical barcodes into Column E, verifies all Checker values show TRUE
 
-**Purpose**: Physical labeling materials for pooling completion
-- Creates populated barcode scan verification templates
-- Generates BarTender files for container label printing
-- Provides materials for manual pooling operations
+### 6. Barcode Verification + ESP File Generation *(Refactored)*
+**Script**: [`verify_scanning_and_generate_ESP_files.py`](06_verify_scanning_and_generate_ESP_files.md)
+
+**Purpose**: Mandatory barcode scanning verification followed by ESP smear file generation
+- Locates completed Excel scanning file from Script 5 output
+- **Validates Checker column**: Any FALSE value causes immediate `sys.exit()` — no ESP files generated
+- Generates ESP-compatible smear analysis files for external upload
+- Updates `individual_plates` with ESP generation status columns
+- Refreshes `individual_plates.csv` with all new columns
 
 **Key Outputs**:
-- Excel barcode verification template
-- BarTender container label files
-- Physical workflow support materials
+- ESP smear files: `C_smear_file_for_ESP_upload/ESP_smear_file_for_upload_{container_barcode}.csv`
+- Updated `individual_plates` with `esp_generation_status`, `esp_generated_timestamp`, `esp_batch_id`
+- Refreshed `individual_plates.csv`
 
 ## Data Flow Architecture
 
@@ -130,9 +140,11 @@ Plate Selection CSV (User Input)
         ↓
 Grid Table Files (External Input)
         ↓
-[Script 5] → ESP Files + Container Mapping
+[Script 5] → Container Barcode Mapping + Excel Scanning Template + BarTender File
         ↓
-[Script 6] → Physical Labeling Materials
+Manual Step: User scans physical barcodes into Excel template
+        ↓
+[Script 6] → Barcode Verification → ESP Smear Files + ESP Status Updates
 ```
 
 ### Database Evolution
@@ -143,15 +155,48 @@ Grid Table Files (External Input)
 | 2 | `master_plate_data` | Index assignments, FA well mappings |
 | 3 | `master_plate_data`, `individual_plates` | FA results, quality decisions, processing status |
 | 4 | `master_plate_data`, `individual_plates` | Selection flags, pooling status |
-| 5 | `master_plate_data`, `individual_plates` | Grid table data, container barcodes |
-| 6 | None | Read-only access for label generation |
+| 5 | `master_plate_data`, `individual_plates` | Grid table data, `library_plate_container_barcode` |
+| 6 | `individual_plates` | `esp_generation_status`, `esp_generated_timestamp`, `esp_batch_id` |
+
+### Directory Structure After Complete Workflow
+
+```
+project_directory/
+├── project_summary.db
+├── individual_plates.csv          (refreshed by Scripts 5 and 6)
+├── master_plate_data.csv          (refreshed by Script 5)
+├── sample_metadata.csv
+├── 1_make_barcode_labels/
+│   └── bartender_barcode_labels/
+├── 2_library_creation/
+│   ├── FA_transfer_files/
+│   ├── FA_upload_files/
+│   └── Illumina_index_transfer_files/
+├── 3_FA_analysis/
+├── 4_plate_selection_and_pooling/
+│   ├── {proposal}_capsule_sort_SPITS.csv
+│   ├── plate_selection.csv
+│   ├── B_new_plate_barcode_labels/          ← Script 5 output
+│   │   ├── {proposal}_pool_label_scan_verificiation_tool.xlsx
+│   │   └── BARTENDER_{proposal}_container_labels.txt
+│   ├── C_smear_file_for_ESP_upload/         ← Script 6 output
+│   │   └── ESP_smear_file_for_upload_{barcode}.csv
+│   └── previously_processed_grid_files/
+└── archived_files/
+```
 
 ## Key Technical Features
 
 ### Barcode System
 - **Sequential generation**: Collision-free 5-character base + incremental numbering
 - **Instrument variants**: Echo (`e{barcode}`) and Hamilton (`h{barcode}`) prefixes
-- **External mapping**: Internal barcodes linked to library container barcodes
+- **External mapping**: Internal barcodes linked to library container barcodes via grid tables
+
+### Barcode Scanning Verification (New in Refactored Workflow)
+- **Excel template**: Checker column (Column D) contains formulas comparing expected vs. scanned barcodes
+- **Acceptable values**: `True` (match) or `"empty"` (unused slot)
+- **Fatal condition**: Any `False` value causes Script 6 to `sys.exit()` immediately
+- **Safety guarantee**: ESP files are never generated with mismatched barcodes
 
 ### Index Assignment Strategy
 - **Full plates**: 384-well → four 96-well index sets using odd/even patterns
@@ -172,10 +217,10 @@ Grid Table Files (External Input)
 ## Integration Points
 
 ### External Systems
-- **BarTender**: Label printing system integration
-- **Fragment Analyzer**: Quality control instrument data processing
-- **ESP**: External sample processing system file exchange
-- **JGI SPITS**: Sample submission system compatibility
+- **BarTender**: Label printing system integration (Scripts 1 and 5)
+- **Fragment Analyzer**: Quality control instrument data processing (Script 3)
+- **ESP**: External sample processing system file exchange (Script 6)
+- **JGI SPITS**: Sample submission system compatibility (Script 4)
 
 ### Laboratory Instruments
 - **Echo**: Acoustic liquid handling (barcode prefix `e`)
@@ -183,51 +228,35 @@ Grid Table Files (External Input)
 - **Fragment Analyzer**: DNA quality assessment instrument
 
 ### Manual Processes
-- **Plate selection**: User-driven decision based on FA results
-- **Grid table creation**: External pooling system output
-- **Physical labeling**: Barcode verification and container labeling
+- **Plate selection**: User-driven decision based on FA results (between Scripts 3 and 4)
+- **Grid table creation**: External pooling system output (input to Script 5)
+- **Barcode scanning**: Physical barcode verification using Excel template (between Scripts 5 and 6)
 
 ## Error Handling Strategy
 
 ### Laboratory-Grade Safety
 - **"FATAL ERROR" messaging**: Clear error identification for laboratory safety
-- **Fail-fast design**: Immediate termination on critical errors
+- **Fail-fast design**: Immediate `sys.exit()` on critical errors — no partial state corruption
 - **Comprehensive validation**: Input validation at every processing stage
 - **Data integrity checks**: Prevents processing with incomplete or corrupted data
+- **Barcode mismatch protection**: Script 6 refuses to generate ESP files if any barcode scan failed
 
 ### Recovery Mechanisms
 - **Incremental processing**: Scripts can be re-run safely
-- **Skip logic**: Avoids reprocessing completed items
 - **Archive preservation**: Previous processing states always available
 - **Status tracking**: Database maintains processing state for recovery
+- **Workflow manager integration**: `.workflow_status/` success markers for automation
 
-## Performance Characteristics
+## Deprecated Scripts
 
-### Scalability
-- **Plate capacity**: Handles projects with hundreds of plates
-- **Memory efficiency**: Processes data in chunks to manage large datasets
-- **Parallel processing**: Multiple output files generated simultaneously
-- **Incremental updates**: Only processes new data, preserves existing records
+The following scripts are **no longer part of the active workflow** and have been replaced:
 
-### Reliability
-- **Database transactions**: Atomic updates prevent partial state corruption
-- **File locking**: Prevents concurrent access issues
-- **Validation pipelines**: Multi-stage validation ensures data quality
-- **Rollback capability**: Archive system enables recovery from errors
+| Deprecated Script | Replaced By | Reason |
+|------------------|-------------|--------|
+| `make_ESP_smear_analysis_file.py` | `process_grid_tables_and_generate_barcodes.py` (grid processing) + `verify_scanning_and_generate_ESP_files.py` (ESP generation) | Split to insert mandatory barcode scanning verification step |
+| `relabel_lib_plates_for_pooling.py` | `process_grid_tables_and_generate_barcodes.py` | Barcode label generation now happens before scanning, not after ESP files |
 
-## Quality Assurance Features
-
-### Data Validation
-- **Schema enforcement**: Required columns and data types validated
-- **Completeness checks**: Ensures all expected data is present
-- **Consistency validation**: Cross-references between tables verified
-- **Format compliance**: External system file formats strictly enforced
-
-### Audit Trail
-- **Processing timestamps**: Every operation timestamped
-- **Batch identification**: Processing runs uniquely identified
-- **Status tracking**: Processing state maintained in database
-- **Archive preservation**: Complete processing history maintained
+Both deprecated scripts are retained in the repository for reference but should not be run as part of the standard workflow.
 
 ## Usage Patterns
 
@@ -237,18 +266,20 @@ Grid Table Files (External Input)
 3. **Quality analysis**: Run Script 3 after FA instrument processing
 4. **Selection decision**: Create plate selection CSV based on FA results
 5. **SPITS generation**: Run Script 4 to create submission files
-6. **External processing**: Obtain grid tables from external system
-7. **ESP file creation**: Run Script 5 to generate ESP files
-8. **Physical preparation**: Run Script 6 to create labeling materials
+6. **External processing**: Obtain grid tables from external pooling system
+7. **Grid processing**: Run Script 5 to process grids and generate barcode scanning materials
+8. **Barcode scanning**: Manually scan physical barcodes into Excel template
+9. **Verification + ESP**: Run Script 6 to verify scanning and generate ESP files
 
 ### Re-run Scenarios
 - **Additional plates**: Scripts 1-2 can add plates to existing projects
 - **New FA results**: Script 3 processes only new FA files
 - **Selection changes**: Scripts 4-6 can be re-run with different selections
+- **Barcode scan correction**: Fix Excel template and re-run Script 6 (no database changes needed)
 
 ### Error Recovery
-- **Database corruption**: Restore from timestamped archive
+- **Database corruption**: Restore from timestamped archive in `archived_files/`
 - **Partial processing**: Resume from last successful step
-- **File corruption**: Regenerate from database state
+- **Failed barcode scan**: Correct Excel template and re-run Script 6
 
-This comprehensive workflow provides a robust, scalable, and maintainable solution for laboratory capsule sorting operations, with built-in quality control, error handling, and integration capabilities for complex laboratory environments.
+This comprehensive workflow provides a robust, scalable, and maintainable solution for laboratory capsule sorting operations, with built-in quality control, mandatory barcode verification, error handling, and integration capabilities for complex laboratory environments.
