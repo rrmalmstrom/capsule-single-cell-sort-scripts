@@ -202,7 +202,7 @@ def read_library_sort_plates():
             print("File must contain at least one plate name.")
             sys.exit()
         
-        print(f"✅ Read {len(plate_list)} plate names from library_sort_plates.txt")
+        # Read successful - no output needed
         return plate_list
         
     except Exception as e:
@@ -266,7 +266,7 @@ def separate_custom_and_standard_plates(plate_list, individual_plates_df):
             else:
                 standard_plates.append(plate_name)
     
-    print(f"✅ Found {len(custom_plates)} custom plates and {len(standard_plates)} standard plates")
+    # Plate separation successful - no output needed
     return custom_plates, standard_plates
 
 
@@ -407,6 +407,7 @@ def find_individual_standard_plate_files(standard_plates):
 def load_standard_template():
     """
     Load and validate the standard plate layout template.
+    First looks in 2_library_creation/, then in the script directory.
     
     Returns:
         pd.DataFrame: Standard template DataFrame
@@ -420,11 +421,27 @@ def load_standard_template():
         'number_of_cells/capsules', 'Group_1', 'Group_2', 'Group_3'
     ]
     
+    # First try the current location (2_library_creation/)
     template_path = Path("2_library_creation/standard_sort_layout.csv")
+    
     if not template_path.exists():
-        print(f"FATAL ERROR: Standard template file 'standard_sort_layout.csv' not found in 2_library_creation folder")
-        print("Template file is required in 2_library_creation/ when individual plate layout files are not available.")
-        sys.exit()
+        # If not found, try the script directory
+        script_dir = Path(__file__).parent
+        template_path = script_dir / "standard_sort_layout.csv"
+        
+        if not template_path.exists():
+            print(f"FATAL ERROR: Standard template file 'standard_sort_layout.csv' not found")
+            print("Searched in:")
+            print("  - 2_library_creation/standard_sort_layout.csv")
+            print(f"  - {template_path}")
+            print("Template file is required when individual plate layout files are not available.")
+            sys.exit()
+        else:
+            # Template found in script directory - no output needed
+            pass
+    else:
+        # Template found in 2_library_creation - no output needed
+        pass
     
     try:
         template_df = pd.read_csv(template_path, encoding='utf-8-sig')
@@ -489,7 +506,7 @@ def apply_template_to_plates(plates_needing_template, template_df, individual_pl
         plate_layout.loc[sample_mask, 'Sample'] = sample
         
         template_layouts[standard_plate] = plate_layout
-        print(f"✅ Applied standard template to plate '{standard_plate}' (project: {project}, sample: {sample})")
+        # Template applied successfully - no output needed
     
     return template_layouts
 
@@ -512,9 +529,7 @@ def process_standard_plate_layouts(standard_plates, individual_plates_df, sample
     # Second approach: Use standard template for remaining plates
     template_layouts = {}
     if plates_needing_template:
-        print(f"✅ Found individual files for {len(plates_with_files)} standard plates")
-        print(f"⚠️  Using standard template for {len(plates_needing_template)} standard plates")
-        
+        # Standard plate processing - no detailed output needed
         template_df = load_standard_template()
         template_layouts = apply_template_to_plates(plates_needing_template, template_df, individual_plates_df)
     
@@ -630,7 +645,7 @@ def assign_upper_left_index_sets(upper_left_plates):
     
     # Randomly select starting index set
     start_index = random.randint(0, len(index_sets) - 1)
-    print(f"✅ Upper left registration: Random start at {index_sets[start_index]}")
+    # Upper left registration assignments - no detailed output needed
     
     # Assign index sets cyclically
     plate_assignments = {}
@@ -639,7 +654,7 @@ def assign_upper_left_index_sets(upper_left_plates):
         current_index = (start_index + i) % len(index_sets)
         assigned_set = index_sets[current_index]
         plate_assignments[plate_name] = assigned_set
-        print(f"✅ Plate '{plate_name}' assigned to {assigned_set}")
+        # Index assignment successful - no output needed
     
     return plate_assignments
 
@@ -672,7 +687,7 @@ def add_index_columns_to_plates(all_plate_layouts):
         else:
             full_plates.append(plate_name)
     
-    print(f"✅ Detected {len(upper_left_plates)} upper left plates and {len(full_plates)} full plates")
+    # Plate type detection successful - no output needed
     
     # Step 2: Assign index sets to upper left plates
     upper_left_assignments = assign_upper_left_index_sets(upper_left_plates)
@@ -829,7 +844,7 @@ def create_illumina_index_files(all_plate_layouts_with_indexes, individual_plate
             output_df.to_csv(csv_filename, index=False)
             # Illumina index file created - no detailed output needed
         
-    print(f"✅ Completed Illumina index file generation")
+    # Illumina index file generation completed - no output needed
 
 
 def detect_upper_left_registration(plate_df):
@@ -868,7 +883,7 @@ def detect_upper_left_registration(plate_df):
                 return False
     
     # All even rows and even columns contain only 'unused' wells
-    print("✅ Upper left registration pattern detected")
+    # Upper left registration pattern detected - no output needed
     return True
 
 
@@ -906,7 +921,7 @@ def select_wells_for_fa_transfer_upper_left(plate_df):
     # Sort by row then column for consistent ordering
     selected_wells = selected_wells.sort_values(['Well_Row', 'Well_Col'])
     
-    print(f"✅ Upper left registration: Selected {len(selected_wells)} wells for direct FA mapping")
+    # Upper left registration wells selected - no output needed
     return selected_wells
 
 
@@ -966,13 +981,13 @@ def select_wells_for_fa_transfer_full_plate(plate_df):
     if total_wells <= 92:
         # Select all wells
         selected_wells = wells_up_to_last_pos_cntrl
-        print(f"✅ Full plate: Selected all {total_wells} wells for FA transfer")
+        # Full plate wells selected - no output needed
     else:
         # Select first 48 + last 44 wells
         first_48 = wells_up_to_last_pos_cntrl.head(48)
         last_44 = wells_up_to_last_pos_cntrl.tail(44)
         selected_wells = pd.concat([first_48, last_44])
-        print(f"✅ Full plate: Selected 48+44={len(selected_wells)} wells for FA transfer")
+        # Full plate wells selected - no output needed
     
     # Step 6: Verify the last selected well is pos_cntrl
     if not selected_wells.empty:
@@ -1058,7 +1073,7 @@ def assign_fa_wells_upper_left(selected_wells_df):
             print("Upper left registration plates should only contain wells in odd rows and odd columns.")
             sys.exit()
     
-    print(f"✅ Upper left registration: Compressed mapped {len(result_df)} wells to 96-well FA plate")
+    # Upper left registration FA mapping completed - no output needed
     return result_df
 
 
@@ -1121,7 +1136,7 @@ def assign_fa_wells_full_plate(selected_wells_df):
             print("FA well assignment logic error - too many wells selected for 92-position layout.")
             sys.exit()
     
-    print(f"✅ Full plate: Assigned {fa_index} wells to FA positions using 92-well layout")
+    # Full plate FA assignment completed - no output needed
     return sorted_df
 
 
@@ -1216,7 +1231,7 @@ def create_fa_transfer_files(fa_well_assignments, individual_plates_df):
             output_df.to_csv(csv_filename, index=False)
             # FA transfer file created - no detailed output needed
     
-    print(f"✅ Completed FA transfer file generation")
+    # FA transfer file generation completed - no output needed
 
 
 def create_fa_upload_files(fa_well_assignments, individual_plates_df):
@@ -1305,7 +1320,7 @@ def create_fa_upload_files(fa_well_assignments, individual_plates_df):
             
             # FA upload file created - no detailed output needed
     
-    print(f"✅ Completed FA upload file generation")
+    # FA upload file generation completed - no output needed
 
 
 def generate_thresholds_file(plate_list, individual_plates_df):
@@ -1356,7 +1371,7 @@ def generate_thresholds_file(plate_list, individual_plates_df):
                 # DNA concentration threshold is left empty, size threshold is 530, dilution factor is 20
                 f.write(f"{barcode}\t\t530\t20\n")
         
-        print(f"✅ Generated thresholds.txt with {len(plate_barcodes)} plate barcodes")
+        # Thresholds file generated successfully - no output needed
         
     except Exception as e:
         print(f"FATAL ERROR: Could not create thresholds.txt file: {e}")
@@ -1612,10 +1627,7 @@ def update_database_smart(master_df, sample_metadata_df, individual_plates_df, i
             sample_metadata_df.to_sql('sample_metadata', engine, if_exists='replace', index=False)
             individual_plates_with_layout.to_sql('individual_plates', engine, if_exists='replace', index=False)
             master_df.to_sql('master_plate_data', engine, if_exists='replace', index=False)
-            print(f"✅ Created database with 3 tables:")
-            print(f"  - sample_metadata: {len(sample_metadata_df)} records")
-            print(f"  - individual_plates: {len(individual_plates_with_layout)} records")
-            print(f"  - master_plate_data: {len(master_df)} records")
+            # Database created successfully - no detailed output needed
         else:
             # Subsequent run: only update master_plate_data table
             # sample_metadata and individual_plates remain unchanged, but update layout info if provided
@@ -1623,10 +1635,7 @@ def update_database_smart(master_df, sample_metadata_df, individual_plates_df, i
                 update_individual_plates_with_layout_info(engine, layout_detection_results)
             
             master_df.to_sql('master_plate_data', engine, if_exists='replace', index=False)
-            print(f"✅ Updated database (smart update):")
-            print(f"  - sample_metadata: unchanged")
-            print(f"  - individual_plates: updated with layout info for {len(layout_detection_results) if layout_detection_results else 0} plates")
-            print(f"  - master_plate_data: {len(master_df)} records (replaced)")
+            # Database updated successfully - no detailed output needed
         
         # Properly dispose of engine
         engine.dispose()
@@ -1682,7 +1691,7 @@ def update_individual_plates_with_layout_info(engine, layout_detection_results):
             try:
                 conn.execute(text("ALTER TABLE individual_plates ADD COLUMN upper_left_registration BOOLEAN DEFAULT NULL"))
                 conn.commit()
-                print("✅ Added upper_left_registration column to individual_plates table")
+                # Column added successfully - no output needed
             except Exception:
                 # Column already exists - this is expected for subsequent runs after first implementation
                 pass
@@ -1741,7 +1750,7 @@ def archive_and_regenerate_plate_names_csv():
         
         # Generate fresh individual_plates.csv with ALL available columns
         individual_plates_df.to_csv('individual_plates.csv', index=False)
-        print(f"✅ Regenerated individual_plates.csv with {len(individual_plates_df.columns)} columns including layout information")
+        # Individual plates CSV regenerated successfully - no output needed
 
     except Exception as e:
         print(f"FATAL ERROR: Could not regenerate individual_plates.csv: {e}")
@@ -1958,7 +1967,7 @@ def perform_fa_well_selection(all_plate_layouts_with_indexes, individual_plates_
         # Wells selected for FA processing - no detailed output needed
     
     total_selected = sum(len(df) for df in fa_well_assignments.values())
-    print(f"✅ Completed FA well selection: {total_selected} total wells selected across {len(fa_well_assignments)} plates")
+    # FA well selection completed - no detailed output needed
     
     return fa_well_assignments
 
@@ -2001,7 +2010,7 @@ def main():
     
     # Combine all plate layout data
     all_plate_layouts = {**custom_layout_data, **standard_layout_data}
-    print(f"✅ Total plates processed: {len(all_plate_layouts)} ({len(custom_layout_data)} custom + {len(standard_layout_data)} standard)")
+    print(f"✅ Processed {len(all_plate_layouts)} plates ({len(custom_layout_data)} custom + {len(standard_layout_data)} standard)")
     
     # Add index assignments to all plates and capture layout detection results
     all_plate_layouts_with_indexes, layout_detection_results = add_index_columns_to_plates(all_plate_layouts)
@@ -2122,10 +2131,7 @@ def main():
                 warnings.filterwarnings("ignore", category=FutureWarning, message=".*DataFrame concatenation.*")
                 master_df = pd.concat([existing_master_df, new_master_df_cleaned], ignore_index=True)
             
-            print(f"✅ Successfully appended new data:")
-            print(f"  Existing: {len(existing_master_df)} wells")
-            print(f"  New: {len(new_master_df_cleaned)} wells")
-            print(f"  Combined: {len(master_df)} wells")
+            print(f"✅ Appended {len(new_master_df_cleaned)} new wells to existing {len(existing_master_df)} wells")
         except Exception as e:
             print(f"FATAL ERROR: Failed to concatenate DataFrames: {e}")
             print("Cannot safely append new data to existing master DataFrame.")
