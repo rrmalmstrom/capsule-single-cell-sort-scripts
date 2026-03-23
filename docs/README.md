@@ -12,8 +12,23 @@ This directory contains comprehensive documentation for the six-script laborator
 2. **[02_generate_lib_creation_files.md](02_generate_lib_creation_files.md)** - Library preparation and index assignment
 3. **[03_capsule_fa_analysis.md](03_capsule_fa_analysis.md)** - Fragment Analyzer quality analysis
 4. **[04_create_capsule_spits.md](04_create_capsule_spits.md)** - Plate selection and SPITS file generation
-5. **[05_make_ESP_smear_analysis_file.md](05_make_ESP_smear_analysis_file.md)** - ESP file generation and external integration
-6. **[06_relabel_lib_plates_for_pooling.md](06_relabel_lib_plates_for_pooling.md)** - Physical labeling materials creation
+5. **[05_process_grid_tables_and_generate_barcodes.md](05_process_grid_tables_and_generate_barcodes.md)** - Grid processing, container barcode mapping, and barcode scanning material generation
+6. **[06_verify_scanning_and_generate_ESP_files.md](06_verify_scanning_and_generate_ESP_files.md)** - Barcode verification and ESP file generation
+
+### Deprecated Script Documentation (March 2026)
+- **[old_05_make_ESP_smear_analysis_file.md](old_05_make_ESP_smear_analysis_file.md)** - *(Deprecated)* Former ESP file generation script
+- **[old_06_relabel_lib_plates_for_pooling.md](old_06_relabel_lib_plates_for_pooling.md)** - *(Deprecated)* Former physical labeling materials script
+
+## Workflow Update (March 2026)
+
+**Important**: Scripts 5 and 6 have been refactored to improve safety and data integrity:
+
+- **Script 5** (`process_grid_tables_and_generate_barcodes.py`): Now handles grid table processing, container barcode mapping, and generates barcode scanning materials
+- **Script 6** (`verify_scanning_and_generate_ESP_files.py`): Now performs mandatory barcode verification before ESP file generation
+- **Key Change**: Barcode scanning verification now occurs **before** ESP file generation, adding a mandatory quality gate
+- **Safety Feature**: Any barcode mismatch causes Script 6 to exit immediately - no ESP files are generated with incorrect barcodes
+
+The older scripts (`make_ESP_smear_analysis_file.py` and `relabel_lib_plates_for_pooling.py`) are **no longer used** and have been replaced.
 
 ## Quick Start Guide
 
@@ -31,7 +46,10 @@ The scripts must be run in numerical order (1→2→3→4→5→6) as each scrip
 - **Script 3**: FA instrument output files in subdirectories
 - **Script 4**: `plate_selection.csv` (user-created selection criteria)
 - **Script 5**: Grid table CSV files from external system
-- **Script 6**: Uses database data only
+- **Script 6**: Completed Excel scanning file from Script 5 output
+
+### Manual Steps Between Scripts
+- **Between Scripts 5 and 6**: User must scan physical barcodes into Excel template and verify all Checker values show TRUE
 
 ### Key Output Files
 - **Database**: `project_summary.db` (central data repository)
@@ -53,8 +71,8 @@ Each script enhances the database with additional information:
 2. Index assignments and FA well mappings
 3. Quality results and failure analysis
 4. Selection status and pooling decisions
-5. External system identifiers and grid table data
-6. Read-only access for label generation
+5. Grid table data, container barcode mapping, and barcode scanning materials
+6. ESP generation status and barcode verification results
 
 ## File Organization
 
@@ -65,6 +83,9 @@ project_root/
 ├── 2_library_creation/             # Library preparation files
 ├── 3_FA_analysis/                  # Fragment Analyzer results
 ├── 4_plate_selection_and_pooling/  # Selection and pooling files
+│   ├── B_new_plate_barcode_labels/ # Script 5: Barcode scanning materials
+│   ├── C_smear_file_for_ESP_upload/ # Script 6: ESP files
+│   └── previously_processed_grid_files/ # Archived grid tables
 ├── archived_files/                 # Timestamped file archives
 └── docs/                          # This documentation
 ```
@@ -82,6 +103,12 @@ project_root/
 - Comprehensive input validation at every stage
 - Fail-fast design prevents processing with bad data
 - Clear guidance for error resolution
+
+### Barcode Verification Safety (New in March 2026)
+- **Mandatory scanning verification**: Script 6 validates all barcode scans before ESP generation
+- **Fail-safe design**: Any `FALSE` value in Excel Checker column causes immediate `sys.exit()`
+- **Zero tolerance**: ESP files are never generated with mismatched barcodes
+- **Quality gate**: Barcode verification now occurs before ESP file creation, not after
 
 ### Data Integrity
 - Perfect merge validation ensures no data loss
@@ -108,9 +135,10 @@ project_root/
 - **Grid Tables**: External pooling system output
 
 ### Manual Processes
-- Plate selection decisions based on FA results
+- Plate selection decisions based on FA results (between Scripts 3 and 4)
+- Grid table creation from external systems (input to Script 5)
+- **Barcode scanning verification**: Physical barcode scanning into Excel template (between Scripts 5 and 6)
 - Physical barcode verification during pooling
-- Grid table creation from external systems
 
 ## Troubleshooting
 
