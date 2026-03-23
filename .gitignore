@@ -225,3 +225,7 @@ htmlcov/
 # Add any laboratory-specific files that should not be tracked
 # *.lab
 # *.bartender_backup
+
+# Test data folders - these should be stored outside the repository
+fresh_to_ESP*/
+initial_files*/

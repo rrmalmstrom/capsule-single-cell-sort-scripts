@@ -1,5 +1,0 @@
-Destination_plate	DNA_conc_threshold_(nmol/L)	Size_theshold_(bp)	dilution_factor
-XUPVQ-1	0.1	530	20
-XUPVQ-2	0.1	530	20
-XUPVQ-3	0.1	530	20
-XUPVQ-6	0.1	530	20
