@@ -256,6 +256,12 @@ def create_smear_analysis_file(merged_df, base_dir):
         print("SCRIPT TERMINATED: Cannot create smear file without grid table samples")
         sys.exit()
 
+    # Verify pcr_cycles column exists in the dataframe
+    if 'pcr_cycles' not in grid_samples.columns:
+        print("ERROR: 'pcr_cycles' column missing from master_plate_data")
+        print("SCRIPT TERMINATED: PCR cycles data not available in database")
+        sys.exit()
+
     smear_df = pd.DataFrame()
 
     smear_df['Well'] = grid_samples['Well']
@@ -270,7 +276,7 @@ def create_smear_analysis_file(merged_df, base_dir):
     smear_df['QC Result'] = 'Pass'
     smear_df['Failure Mode'] = ''
     smear_df['Index Name'] = grid_samples['Index_Name']
-    smear_df['PCR Cycles'] = 12
+    smear_df['PCR Cycles'] = grid_samples['pcr_cycles']
 
     expected_columns = [
         'Well', 'Sample ID', 'Range', 'ng/uL', '%Total', 'nmole/L',
@@ -360,9 +366,76 @@ def regenerate_individual_plates_csv(base_dir):
         raise
 
 
+def regenerate_master_plate_data_csv(base_dir):
+    """
+    Generate a fresh master_plate_data.csv from the updated database.
+    Ensures the CSV reflects the latest pcr_cycles column added by Script 2.
+
+    Args:
+        base_dir: Project base directory
+    """
+    try:
+        sql_db_path = Path(base_dir) / 'project_summary.db'
+        from sqlalchemy import create_engine
+        engine = create_engine(f'sqlite:///{sql_db_path}')
+        master_plate_df = pd.read_sql('SELECT * FROM master_plate_data', engine)
+        engine.dispose()
+
+        master_csv_path = Path(base_dir) / "master_plate_data.csv"
+        master_plate_df.to_csv(master_csv_path, index=False)
+
+    except Exception as e:
+        print(f"ERROR regenerating master_plate_data.csv: {e}")
+        raise
+
+
 # ---------------------------------------------------------------------------
-# Database update: ESP status (Script 2 responsibility)
+# Database update: PCR cycles and ESP status (Script 2 responsibility)
 # ---------------------------------------------------------------------------
+
+def add_pcr_cycles_column_to_master_plate_data(base_dir):
+    """
+    Add pcr_cycles column to master_plate_data table if it doesn't exist.
+    Sets PCR cycles = 17 only for sample wells (Type != 'unused').
+    Unused wells remain NULL for pcr_cycles.
+    
+    Args:
+        base_dir: Project base directory
+    """
+    sql_db_path = Path(base_dir) / 'project_summary.db'
+    
+    try:
+        from sqlalchemy import create_engine, text
+        engine = create_engine(f'sqlite:///{sql_db_path}')
+        
+        with engine.connect() as conn:
+            # Check if pcr_cycles column exists
+            result = conn.execute(text("PRAGMA table_info(master_plate_data)"))
+            existing_columns = [row[1] for row in result]
+            
+            if 'pcr_cycles' not in existing_columns:
+                # Add pcr_cycles column (no default value, starts as NULL)
+                conn.execute(text(
+                    "ALTER TABLE master_plate_data ADD COLUMN pcr_cycles INTEGER"
+                ))
+                conn.commit()
+                
+                # Update only sample wells (Type != 'unused') to have pcr_cycles = 17
+                conn.execute(text(
+                    "UPDATE master_plate_data SET pcr_cycles = 17 WHERE Type != 'unused'"
+                ))
+                conn.commit()
+                
+                print("  ✓ Added pcr_cycles column to master_plate_data table (17 for samples, NULL for unused)")
+            else:
+                print("  ✓ pcr_cycles column already exists in master_plate_data table")
+                
+    except Exception as e:
+        print(f"ERROR adding pcr_cycles column to master_plate_data: {e}")
+        raise
+    finally:
+        engine.dispose()
+
 
 def update_individual_plates_with_esp_status(base_dir, processed_plate_barcodes, batch_id):
     """
@@ -488,9 +561,15 @@ def main():
         validate_barcode_scanning_completion(excel_path)
 
         # ------------------------------------------------------------------
-        # Step 4: Read database for ESP file generation
+        # Step 4: Add PCR cycles column to database if needed
         # ------------------------------------------------------------------
-        print("\n[Step 4] Reading project database...")
+        print("\n[Step 4] Ensuring PCR cycles column exists in database...")
+        add_pcr_cycles_column_to_master_plate_data(base_dir)
+
+        # ------------------------------------------------------------------
+        # Step 5: Read database for ESP file generation
+        # ------------------------------------------------------------------
+        print("\n[Step 5] Reading project database...")
         master_plate_df, individual_plates_df = read_project_database(base_dir)
         print(f"  ✓ master_plate_data: {len(master_plate_df)} rows")
         print(f"  ✓ individual_plates: {len(individual_plates_df)} rows")
@@ -508,9 +587,9 @@ def main():
             sys.exit()
 
         # ------------------------------------------------------------------
-        # Step 5: Generate ESP smear files
+        # Step 6: Generate ESP smear files
         # ------------------------------------------------------------------
-        print("\n[Step 5] Generating ESP smear analysis files...")
+        print("\n[Step 6] Generating ESP smear analysis files...")
         output_files = create_smear_analysis_file(master_plate_df, base_dir)
 
         if not output_files:
@@ -518,9 +597,9 @@ def main():
             sys.exit()
 
         # ------------------------------------------------------------------
-        # Step 6: Update individual_plates with ESP status
+        # Step 7: Update individual_plates with ESP status
         # ------------------------------------------------------------------
-        print("\n[Step 6] Updating database with ESP generation status...")
+        print("\n[Step 7] Updating database with ESP generation status...")
         grid_samples = master_plate_df[master_plate_df['Nucleic Acid ID'].notna()].copy()
         processed_plate_barcodes = list(grid_samples['Plate_Barcode'].unique())
         batch_id = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
@@ -529,14 +608,17 @@ def main():
         print(f"  ✓ ESP status updated for {len(processed_plate_barcodes)} plate(s)")
 
         # ------------------------------------------------------------------
-        # Step 7: Archive old individual_plates.csv and regenerate from DB
+        # Step 8: Archive old CSV files and regenerate from DB
         # ------------------------------------------------------------------
-        print("\n[Step 7] Refreshing individual_plates.csv...")
+        print("\n[Step 8] Refreshing CSV files...")
         archived = archive_individual_plates_csv(base_dir)
         if archived:
             print(f"  ✓ Archived: {archived.name}")
         regenerate_individual_plates_csv(base_dir)
         print(f"  ✓ Fresh individual_plates.csv generated (includes ESP status columns)")
+        
+        regenerate_master_plate_data_csv(base_dir)
+        print(f"  ✓ Fresh master_plate_data.csv generated (includes pcr_cycles column)")
 
         # ------------------------------------------------------------------
         # Done
