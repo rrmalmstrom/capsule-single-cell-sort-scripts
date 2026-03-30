@@ -193,9 +193,33 @@ Custom_Plate.1,
 - **CSV regeneration**: Creates fresh CSV files from updated database
 
 ## Metadata Integration
-- **Sample metadata merge**: Incorporates collection data from sample_metadata table
+
+### Per-Sample Metadata Join
+Each well's metadata is looked up individually by parsing its `Plate_ID` to extract the `Project` and `Sample` components, then joining against the `sample_metadata` table on those two fields.
+
+```
+Plate_ID 'BP9735_SitukAM.1'  →  Project='BP9735', Sample='SitukAM'
+                               →  joined to sample_metadata row where Project='BP9735' AND Sample='SitukAM'
+```
+
+This ensures that when multiple samples from different projects are processed together, each well receives the correct collection date, location, and environmental context for its own sample — not metadata from another sample.
+
 - **Geographic information**: Includes latitude, longitude, depth, elevation
 - **Temporal data**: Collection year, month, day
 - **Environmental context**: Sample source and isolation details
+
+### Custom Plates Without Metadata
+Custom plates (added via `custom_plate_names.txt`) may not have a corresponding row in `sample_metadata` if metadata was not provided at the time the plate was created. In this case:
+- A **warning** is printed listing the affected plates
+- Metadata fields for those wells are left **blank** in the SPITS output
+- The script **continues** and generates the SPITS file
+- To populate the missing fields, add the corresponding `Project`/`Sample` row to the `sample_metadata` table before re-running
+
+### Required `sample_metadata` Columns for Join
+The following columns must exist in `sample_metadata` for the join to work:
+```
+Project, Sample
+```
+These are validated at startup by `validate_database_schema()`. If either is missing, the script exits with a FATAL ERROR before processing begins.
 
 This script serves as the critical decision point in the workflow, translating FA quality results into actionable well selections for downstream processing and submission to external systems.
