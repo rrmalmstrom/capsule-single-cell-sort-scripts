@@ -538,7 +538,12 @@ def get_proposal_name(sample_metadata_df):
 
 def create_spits_sample_name(row):
     """
-    Create SPITS sample name using template: "Uncultured microbe JGI {groups}_{plate_id}_{well}"
+    Create SPITS sample name using a prefix determined by sample type.
+    
+    - neg_cntrl samples use prefix: "NoTemplateControl"
+    - All other samples use prefix: "Uncultured microbe JGI"
+    
+    Template: "{prefix} {groups}_{plate_id}_{well}"
     Only includes groups that have actual values (not empty, None, or 'None').
     
     Args:
@@ -558,13 +563,16 @@ def create_spits_sample_name(row):
     plate_id = row.get('Plate_ID', '')
     well = row.get('Well', '')
     
+    # Select prefix based on sample type
+    prefix = "NoTemplateControl" if row.get('Type', '') == 'neg_cntrl' else "Uncultured microbe JGI"
+    
     # Build sample name with only non-empty groups
     if groups:
         groups_str = '_'.join(groups)
-        return f"Uncultured microbe JGI {groups_str}_{plate_id}_{well}"
+        return f"{prefix} {groups_str}_{plate_id}_{well}"
     else:
         # No groups have values
-        return f"Uncultured microbe JGI {plate_id}_{well}"
+        return f"{prefix} {plate_id}_{well}"
 
 
 def create_internal_collaborator_name(row):
@@ -629,6 +637,9 @@ def create_spits_dataframe(merged_wells_df):
     spits_rows = []
     
     for idx, row in merged_wells_df.iterrows():
+        is_neg_cntrl = row.get('Type', '') == 'neg_cntrl'
+        now = datetime.now()
+        
         spits_row = {
             # Dynamic fields
             'Sample Name*': create_spits_sample_name(row),
@@ -647,26 +658,28 @@ def create_spits_dataframe(merged_wells_df):
             'Tube or Plate Label*': row.get('Plate_Barcode', ''),
             'Plate location (well #)* required if samples provided in a plate.': row.get('Well', ''),
             
-            # From sample_metadata
-            'Collection Year*': row.get('Collection Year', ''),
-            'Collection Month*': row.get('Collection Month', ''),
-            'Collection Day*': row.get('Collection Day', ''),
-            'Sample Isolated From*': row.get('Sample Isolated From', ''),
-            'Latitude*': row.get('Latitude', ''),
-            'Longitude*': row.get('Longitude', ''),
-            'Depth* (in meters) or minimum depth if a range': row.get('Depth (m)', ''),
-            'Elevation* (in meters) or minimum elevation if a range': row.get('Elevation (m)', ''),
-            'Country*': row.get('Country', ''),
+            # Collection date: neg_cntrl uses current date; samples use sample_metadata values
+            'Collection Year*': now.year if is_neg_cntrl else row.get('Collection Year', ''),
+            'Collection Month*': now.strftime('%B') if is_neg_cntrl else row.get('Collection Month', ''),
+            'Collection Day*': now.day if is_neg_cntrl else row.get('Collection Day', ''),
+            
+            # Sample origin: neg_cntrl uses fixed lab values; samples use sample_metadata values
+            'Sample Isolated From*': 'WGA reagents' if is_neg_cntrl else row.get('Sample Isolated From', ''),
+            'Collection Site or Growth Conditions* (required for RNA samples)': 'WGA reagents' if is_neg_cntrl else '',
+            'Latitude*': 37.87606 if is_neg_cntrl else row.get('Latitude', ''),
+            'Longitude*': -122.25166 if is_neg_cntrl else row.get('Longitude', ''),
+            'Depth* (in meters) or minimum depth if a range': 0 if is_neg_cntrl else row.get('Depth (m)', ''),
+            'Elevation* (in meters) or minimum elevation if a range': 75 if is_neg_cntrl else row.get('Elevation (m)', ''),
+            'Country*': 'USA' if is_neg_cntrl else row.get('Country', ''),
             
             # Empty fields
             'Known / Suspected Organisms': '',
-            'Collection Site or Growth Conditions* (required for RNA samples)': '',
             'Maximum depth (in meters) if a range': '',
             'Maximum elevation (in meters) if a range': '',
             'Sample Contact Name': '',
             'Seq Project PI Name (No edit)': '',
             'Proposal ID (No edit)': '',
-            'Control Type': 'negative' if row.get('Type', '') == 'neg_cntrl' else '',
+            'Control Type': 'negative' if is_neg_cntrl else '',
             'Control Organism Name': '',
             'Control Organism Tax ID': ''
         }
