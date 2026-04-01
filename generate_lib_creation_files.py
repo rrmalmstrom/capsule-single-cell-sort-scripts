@@ -79,6 +79,9 @@ from datetime import datetime
 from pathlib import Path
 from sqlalchemy import create_engine
 
+# BarTender file header — matches the format used by initiate_project_folder_and_make_sort_plate_labels.py
+BARTENDER_HEADER = '%BTW% /AF="\\\\BARTENDER\\shared\\templates\\ECHO_BCode8.btw" /D="%Trigger File Name%" /PRN="bcode8" /R=3 /P /DD\r\n\r\n%END%\r\n\r\n\r\n'
+
 
 def create_success_marker():
     """Create success marker file for workflow manager integration."""
@@ -1972,6 +1975,92 @@ def perform_fa_well_selection(all_plate_layouts_with_indexes, individual_plates_
     return fa_well_assignments
 
 
+def create_dilution_and_fa_bartender_file(plate_list, individual_plates_df):
+    """
+    Create a single BarTender label file containing dilution plate and FA plate
+    labels for all processed plates.
+
+    For each library plate barcode (e.g. "A7A7K-6") two labels are written:
+      - Dilution plate: "{barcode}D"  (e.g. "A7A7K-6D")
+      - FA plate:       "{barcode}F"  (e.g. "A7A7K-6F")
+
+    The file is written to:
+        2_library_creation/BARTENDER_dilution_and_FA_plate_labels.txt
+
+    Format mirrors the BarTender files produced by
+    initiate_project_folder_and_make_sort_plate_labels.py:
+      - Special header block
+      - One label per line: {barcode},"<human-readable name>"
+      - Blank separator line (,) between labels
+      - Plates are ordered highest barcode number first (reverse order),
+        with the dilution label printed before the FA label for each plate.
+
+    Args:
+        plate_list (list): List of plate names being processed (in processing order)
+        individual_plates_df (pd.DataFrame): Database plate information for barcode lookup
+    """
+    output_dir = Path("2_library_creation")
+    output_dir.mkdir(exist_ok=True)
+
+    output_path = output_dir / "BARTENDER_dilution_and_FA_plate_labels.txt"
+
+    # Build list of (barcode_number, barcode, plate_name) tuples so we can sort
+    plate_entries = []
+    for plate_name in plate_list:
+        plate_row = individual_plates_df[individual_plates_df['plate_name'] == plate_name]
+        if plate_row.empty:
+            print(f"FATAL ERROR: Could not find barcode for plate '{plate_name}' in database")
+            print("All plates must have valid barcodes in the individual_plates table.")
+            sys.exit()
+
+        barcode = plate_row['barcode'].iloc[0]
+
+        # Extract numeric suffix for sorting (e.g. "A7A7K-6" -> 6)
+        try:
+            barcode_number = int(str(barcode).split('-')[-1])
+        except ValueError:
+            barcode_number = 0
+
+        plate_entries.append((barcode_number, barcode, plate_name))
+
+    # Sort highest barcode number first (matches sort-plate BarTender convention)
+    plate_entries.sort(key=lambda x: x[0], reverse=True)
+
+    try:
+        with open(output_path, 'w', newline='') as f:
+            # Write BarTender header
+            f.write(BARTENDER_HEADER)
+
+            total_labels = len(plate_entries) * 2  # dilution + FA per plate
+            label_index = 0
+
+            for barcode_number, barcode, plate_name in plate_entries:
+                dilution_barcode = f"{barcode}D"
+                fa_barcode = f"{barcode}F"
+
+                # --- Dilution plate label ---
+                f.write(f'{dilution_barcode},"{plate_name} Dilution"\r\n')
+                label_index += 1
+                if label_index < total_labels:
+                    f.write(',\r\n')
+
+                # --- FA plate label ---
+                f.write(f'{fa_barcode},"{plate_name} FA"\r\n')
+                label_index += 1
+                if label_index < total_labels:
+                    f.write(',\r\n')
+
+            # Trailing blank line for BarTender compatibility
+            f.write('\r\n')
+
+        # BarTender dilution/FA label file created - no detailed output needed
+
+    except Exception as e:
+        print(f"FATAL ERROR: Could not create BarTender dilution/FA label file: {e}")
+        print("Failed to write BarTender label file to 2_library_creation/ folder.")
+        sys.exit()
+
+
 def main():
     """
     Main function - entry point for our script.
@@ -2023,7 +2112,10 @@ def main():
     
     # Create FA transfer files using pre-computed FA selections
     create_fa_transfer_files(fa_well_assignments, individual_plates_df)
-    
+
+    # Create single BarTender label file for dilution and FA plates
+    create_dilution_and_fa_bartender_file(plate_list, individual_plates_df)
+
     # Create FA upload files using pre-computed FA selections
     create_fa_upload_files(fa_well_assignments, individual_plates_df)
     
