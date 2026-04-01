@@ -466,8 +466,7 @@ def read_from_database(db_path):
 def make_bartender_file(df, output_path):
     """
     Generate BarTender label file with simplified barcode system.
-    Creates echo/hamilton variants at print time with lowercase prefixes.
-    Format: Reverse order (highest to lowest), interleaved echo/hamilton pairs with separators.
+    Format: Reverse order (highest to lowest), one line per plate with barcode and plate name.
     
     Args:
         df (pd.DataFrame): DataFrame with barcode data (must have 'barcode' and 'plate_name' columns)
@@ -487,20 +486,15 @@ def make_bartender_file(df, output_path):
             df_sorted['barcode_num'] = df_sorted['barcode'].str.split('-').str[1].astype(int)
             df_sorted = df_sorted.sort_values('barcode_num', ascending=False)
             
-            # Interleaved echo/hamilton pairs in reverse order with separators
+            # One line per plate in reverse order with separators
             for i, (_, row) in enumerate(df_sorted.iterrows()):
                 barcode = row['barcode']
                 plate_name = row['plate_name']
                 
-                # Echo label (with plate name, no "Echo" word)
-                echo_barcode = f"e{barcode}"
-                f.write(f'{echo_barcode},"{plate_name}"\r\n')
+                # write barcode label and human readable plate name label
+                f.write(f'{barcode},"{plate_name}"\r\n')
                 
-                # Hamilton label (barcode with quoted barcode as label)
-                hamilton_barcode = f"h{barcode}"
-                f.write(f'{hamilton_barcode},"{hamilton_barcode}"\r\n')
-                
-                # Add blank separator line between plate sets (except after last plate)
+                # Add blank separator line between plates (except after last plate)
                 if i < len(df_sorted) - 1:
                     f.write(',\r\n')
             
