@@ -489,7 +489,7 @@ def apply_template_to_plates(plates_needing_template, template_df, individual_pl
             print(f"FATAL ERROR: Could not find plate '{standard_plate}' in database")
             sys.exit()
         
-        project = plate_row['project'].iloc[0]
+        proposal = plate_row['project'].iloc[0]
         sample = plate_row['sample'].iloc[0]
         
         # Create a copy of the template for this plate

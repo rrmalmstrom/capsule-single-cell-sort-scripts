@@ -155,7 +155,7 @@ def validate_database_schema(sample_metadata_df, individual_plates_df, master_pl
     """
     # Required columns for each table
     required_columns = {
-        'sample_metadata': ['Proposal', 'Project', 'Sample'],
+        'sample_metadata': ['Proposal', 'Sample'],
         'individual_plates': ['plate_name', 'upper_left_registration'],
         'master_plate_data': ['Plate_ID', 'Well', 'Type', 'Index_Set', 'Passed_library']
     }
@@ -595,11 +595,16 @@ def merge_sample_metadata_for_spits(selected_wells_df, sample_metadata_df):
     """
     Merge selected wells with sample metadata for SPITS field population.
 
-    Each well's Plate_ID encodes the project and sample in the format
-    '{Project}_{Sample}.{number}' (e.g., 'BP9735_SitukAM.1').  This
+    Each well's Plate_ID encodes the proposal and sample in the format
+    '{Proposal}_{Sample}.{number}' (e.g., '9735_SitukAM.1').  This
     function parses those components and performs a proper per-row join
     against the sample_metadata table so that every well receives the
-    metadata that belongs to its own project/sample combination.
+    metadata that belongs to its own proposal/sample combination.
+
+    Note: Proposal values are typically numeric (e.g., '9735').  Both
+    join-key columns are cast to str before merging to avoid int64/object
+    type mismatches that arise when pandas infers a numeric dtype for the
+    Proposal column read from SQLite.
 
     Args:
         selected_wells_df (pd.DataFrame): Selected wells data
@@ -608,44 +613,49 @@ def merge_sample_metadata_for_spits(selected_wells_df, sample_metadata_df):
     Returns:
         pd.DataFrame: Merged data for SPITS generation
     """
-    # Derive join keys from Plate_ID: 'BP9735_SitukAM.1' -> Project='BP9735', Sample='SitukAM'
+    # Derive join keys from Plate_ID: '9735_SitukAM.1' -> Proposal='9735', Sample='SitukAM'
     def _parse_plate_id(plate_id):
-        """Return (project, sample) parsed from a Plate_ID string."""
+        """Return (proposal, sample) parsed from a Plate_ID string."""
         plate_id_str = str(plate_id)
         # Strip the trailing '.N' plate number
-        base = plate_id_str.rsplit('.', 1)[0]  # e.g. 'BP9735_SitukAM'
+        base = plate_id_str.rsplit('.', 1)[0]  # e.g. '9735_SitukAM'
         if '_' in base:
-            project, sample = base.split('_', 1)
+            proposal, sample = base.split('_', 1)
         else:
             # Fallback: no underscore separator found
-            project, sample = base, base
-        return project, sample
+            proposal, sample = base, base
+        return proposal, sample
 
-    # Add temporary join-key columns to the wells DataFrame
+    # Add temporary join-key columns to the wells DataFrame.
+    # Cast to str to prevent int64/object type mismatch when Proposal values
+    # are numeric and pandas infers int64 from the SQLite sample_metadata table.
     parsed = selected_wells_df['Plate_ID'].apply(_parse_plate_id)
     selected_wells_df = selected_wells_df.copy()
-    selected_wells_df['_join_Project'] = [p for p, s in parsed]
-    selected_wells_df['_join_Sample'] = [s for p, s in parsed]
+    selected_wells_df['_join_Proposal'] = [str(p) for p, s in parsed]
+    selected_wells_df['_join_Sample'] = [str(s) for p, s in parsed]
 
     # Prepare metadata for merging: rename join columns to match temp keys
     metadata_for_merge = sample_metadata_df.copy()
     metadata_for_merge = metadata_for_merge.rename(
-        columns={'Project': '_join_Project', 'Sample': '_join_Sample'}
+        columns={'Proposal': '_join_Proposal', 'Sample': '_join_Sample'}
     )
+    # Cast to str to match the parsed join keys above
+    metadata_for_merge['_join_Proposal'] = metadata_for_merge['_join_Proposal'].astype(str)
+    metadata_for_merge['_join_Sample'] = metadata_for_merge['_join_Sample'].astype(str)
 
     # Identify metadata columns that are not already present in wells DataFrame
     # (excluding the join keys themselves which we added temporarily)
-    existing_cols = set(selected_wells_df.columns) - {'_join_Project', '_join_Sample'}
+    existing_cols = set(selected_wells_df.columns) - {'_join_Proposal', '_join_Sample'}
     metadata_cols_to_add = [
         c for c in metadata_for_merge.columns
-        if c not in existing_cols and c not in ('_join_Project', '_join_Sample')
+        if c not in existing_cols and c not in ('_join_Proposal', '_join_Sample')
     ]
     # Always keep the join keys in the metadata slice
-    merge_cols = ['_join_Project', '_join_Sample'] + metadata_cols_to_add
+    merge_cols = ['_join_Proposal', '_join_Sample'] + metadata_cols_to_add
 
     merged_df = selected_wells_df.merge(
         metadata_for_merge[merge_cols],
-        on=['_join_Project', '_join_Sample'],
+        on=['_join_Proposal', '_join_Sample'],
         how='left'
     )
 
@@ -659,10 +669,10 @@ def merge_sample_metadata_for_spits(selected_wells_df, sample_metadata_df):
             )
             print(f"⚠️  Warning: No sample_metadata entry found for plates: {unmatched_plates}")
             print("   Metadata fields will be left blank for those wells in the SPITS output.")
-            print("   To populate them, add the corresponding Project/Sample row to sample_metadata.")
+            print("   To populate them, add the corresponding Proposal/Sample row to sample_metadata.")
 
     # Drop temporary join-key columns
-    merged_df = merged_df.drop(columns=['_join_Project', '_join_Sample'])
+    merged_df = merged_df.drop(columns=['_join_Proposal', '_join_Sample'])
 
     return merged_df
 

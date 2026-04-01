@@ -131,7 +131,7 @@ def read_sample_csv(csv_path):
         df = pd.read_csv(csv_path, encoding='utf-8-sig')
         
         # Validate required columns
-        required_cols = ['Proposal', 'Project', 'Sample', 'Number_of_sorted_plates']
+        required_cols = ['Proposal', 'Sample', 'Number_of_sorted_plates']
         missing = [col for col in required_cols if col not in df.columns]
         
         if missing:
@@ -175,15 +175,15 @@ def make_plate_names(sample_df):
     plates = []
     
     for _, row in sample_df.iterrows():
-        project = row['Project']
+        proposal = row['Proposal']
         sample = row['Sample']
         num_plates = int(row['Number_of_sorted_plates'])
         
         # Generate plate names for each sample
         for i in range(1, num_plates + 1):
             plates.append({
-                'plate_name': f"{project}_{sample}.{i}",
-                'project': project,
+                'plate_name': f"{proposal}_{sample}.{i}",
+                'project': proposal,
                 'sample': sample,
                 'plate_number': i,
                 'is_custom': False
@@ -527,13 +527,13 @@ def detect_sample_metadata_csv():
     """
     # Complete list of expected headers from sample_metadtata.csv format
     expected_headers = [
-        'Proposal', 'Project', 'Sample', 'Collection Year', 'Collection Month',
+        'Proposal', 'Sample', 'Collection Year', 'Collection Month',
         'Collection Day', 'Sample Isolated From', 'Latitude', 'Longitude',
         'Depth (m)', 'Elevation (m)', 'Country', 'Number_of_sorted_plates'
     ]
     
     # Required subset for processing
-    required_headers = ['Proposal', 'Project', 'Sample', 'Number_of_sorted_plates']
+    required_headers = ['Proposal', 'Sample', 'Number_of_sorted_plates']
     
     # Look for sample_metadtata.csv specifically first
     sample_metadata_file = Path('sample_metadtata.csv')
@@ -1233,26 +1233,26 @@ def process_additional_standard_plates(existing_sample_df, additional_plates, ex
     for sample_id, count in additional_plates.items():
         print(f"  - {sample_id}: {count} additional plates")
         
-        # Parse PROJECT_SAMPLE format (e.g., "BP9735_WCBP1PR" -> project="BP9735", sample="WCBP1PR")
+        # Parse PROPOSAL_SAMPLE format (e.g., "BP9735_WCBP1PR" -> proposal="BP9735", sample="WCBP1PR")
         if '_' not in sample_id:
-            print(f"⚠️  WARNING: Invalid format for {sample_id}. Expected PROJECT_SAMPLE format (e.g., 'BP9735_WCBP1PR')")
+            print(f"⚠️  WARNING: Invalid format for {sample_id}. Expected PROPOSAL_SAMPLE format (e.g., 'BP9735_WCBP1PR')")
             continue
             
-        project, sample = sample_id.split('_', 1)
+        proposal, sample = sample_id.split('_', 1)
         
-        # Find the sample with matching project and sample combination
+        # Find the sample with matching proposal and sample combination
         sample_row = existing_sample_df[
-            (existing_sample_df['Project'] == project) &
+            (existing_sample_df['Proposal'] == proposal) &
             (existing_sample_df['Sample'] == sample)
         ]
         
         if sample_row.empty:
-            print(f"⚠️  WARNING: Project-Sample combination '{project}' + '{sample}' not found in existing metadata")
+            print(f"⚠️  WARNING: Proposal-Sample combination '{proposal}' + '{sample}' not found in existing metadata")
             continue
         
-        # DEBUG: Find existing plates for this project-sample combination
+        # Find existing plates for this proposal-sample combination
         existing_sample_plates = existing_plates_df[
-            (existing_plates_df['project'] == project) &
+            (existing_plates_df['project'] == proposal) &
             (existing_plates_df['sample'] == sample) &
             (existing_plates_df['is_custom'] == False)
         ]
@@ -1266,11 +1266,11 @@ def process_additional_standard_plates(existing_sample_df, additional_plates, ex
         # Create additional plates for this sample, continuing from the highest existing number
         for i in range(count):
             next_plate_number = max_plate_number + i + 1
-            plate_name = f"{project}_{sample}.{next_plate_number}"
+            plate_name = f"{proposal}_{sample}.{next_plate_number}"
             
             additional_plates_list.append({
                 'plate_name': plate_name,
-                'project': project,
+                'project': proposal,
                 'sample': sample,
                 'plate_number': next_plate_number,
                 'is_custom': False

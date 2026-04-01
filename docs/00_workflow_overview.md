@@ -10,8 +10,8 @@ This laboratory workflow consists of **six Python scripts** that execute in sequ
 
 ### Database-Driven Design
 - **Central database**: `project_summary.db` (SQLite) serves as the single source of truth
-- **Three-table architecture**: 
-  - `sample_metadata`: Project and collection information
+- **Three-table architecture**:
+  - `sample_metadata`: Proposal and collection information (the `Project` column has been removed; `Proposal` is the sole project identifier)
   - `individual_plates`: Plate inventory with barcodes and status tracking
   - `master_plate_data`: Comprehensive well-level data with index assignments and quality results
 - **Incremental updates**: Each script enhances the database with additional information

@@ -22,7 +22,7 @@ This is the **second script** in the laboratory workflow that processes sorted m
 
 ### Database Dependencies
 - **`project_summary.db`**: Must contain all three tables from Script 1
-  - `sample_metadata`: Project information
+  - `sample_metadata`: Proposal and collection information (no `Project` column)
   - `individual_plates`: Plate inventory with barcodes
   - `master_plate_data`: Will be created/updated by this script
 
@@ -162,9 +162,9 @@ python generate_lib_creation_files.py
 
 ### Input File Format (library_sort_plates.txt)
 ```
-BP9735_SitukAM.1
-BP9735_SitukAM.2
-BP4444_RexRM.1
+9735_SitukAM.1
+9735_SitukAM.2
+4444_RexRM.1
 Custom_Plate_Name.1
 ```
 

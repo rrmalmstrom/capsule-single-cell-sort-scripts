@@ -28,12 +28,12 @@ This is the **fourth script** in the laboratory workflow that processes plate se
 - **Location**: `4_plate_selection_and_pooling/plate_selection.csv`
 - **Format**: Two-column CSV with headers
 - **Columns**:
-  - `Plate_ID`: Plate identifier (e.g., `BP9735_SitukAM.1`)
+  - `Plate_ID`: Plate identifier (e.g., `9735_SitukAM.1`)
   - `Index_sets`: Comma-separated index sets or empty for all (e.g., `PE17,PE19`)
 
 ### Database Dependencies
 - **Complete three-table structure** from Script 3:
-  - `sample_metadata`: Project and collection information
+  - `sample_metadata`: Proposal and collection information (no `Project` column)
   - `individual_plates`: Plate inventory with layout detection results
   - `master_plate_data`: Well-level data with FA results and quality assessments
 
@@ -46,7 +46,7 @@ plate_name, upper_left_registration
 Plate_ID, Well, Type, Index_Set, Passed_library
 
 -- sample_metadata table
-Proposal (for file naming)
+Proposal, Sample  (join keys for metadata lookup; Project column removed)
 ```
 
 ## Output Files
@@ -106,7 +106,7 @@ def select_wells_from_full_plate(plate_wells, index_sets_str):
 - **Template**: `"Uncultured microbe JGI {groups}_{plate_id}_{well}"`
 - **Group filtering**: Only includes non-empty Group_1, Group_2, Group_3 values
 - **Fallback**: Uses plate_id and well if no groups available
-- **Example**: `"Uncultured microbe JGI SitukAM_Sediment_BP9735_SitukAM.1_A1"`
+- **Example**: `"Uncultured microbe JGI SitukAM_Sediment_9735_SitukAM.1_A1"`
 
 ### Fixed Laboratory Parameters
 ```python
@@ -159,9 +159,9 @@ python create_capsule_spits.py
 ### Plate Selection File Format
 ```csv
 Plate_ID,Index_sets
-BP9735_SitukAM.1,PE17,PE19
-BP9735_SitukAM.2,
-BP4444_RexRM.1,PE18
+9735_SitukAM.1,PE17,PE19
+9735_SitukAM.2,
+4444_RexRM.1,PE18
 Custom_Plate.1,
 ```
 
@@ -173,10 +173,10 @@ Custom_Plate.1,
 
 ### Output Summary
 ```
-✅ Upper left plate 'BP9735_SitukAM.1': Selected 23 wells that passed FA analysis
-✅ Full plate 'BP4444_RexRM.1': Selected 48 wells from index sets ['PE18']
+✅ Upper left plate '9735_SitukAM.1': Selected 23 wells that passed FA analysis
+✅ Full plate '4444_RexRM.1': Selected 48 wells from index sets ['PE18']
 ✅ Total wells selected for SPITS processing: 71
-📄 Generated: 599999_capsule_sort_SPITS.csv
+📄 Generated: 9735_capsule_sort_SPITS.csv
 🔬 Processed 71 wells from 2 plates
 ```
 
@@ -195,14 +195,16 @@ Custom_Plate.1,
 ## Metadata Integration
 
 ### Per-Sample Metadata Join
-Each well's metadata is looked up individually by parsing its `Plate_ID` to extract the `Project` and `Sample` components, then joining against the `sample_metadata` table on those two fields.
+Each well's metadata is looked up individually by parsing its `Plate_ID` to extract the `Proposal` and `Sample` components, then joining against the `sample_metadata` table on those two fields.
 
 ```
-Plate_ID 'BP9735_SitukAM.1'  →  Project='BP9735', Sample='SitukAM'
-                               →  joined to sample_metadata row where Project='BP9735' AND Sample='SitukAM'
+Plate_ID '9735_SitukAM.1'  →  Proposal='9735', Sample='SitukAM'
+                             →  joined to sample_metadata row where Proposal='9735' AND Sample='SitukAM'
 ```
 
-This ensures that when multiple samples from different projects are processed together, each well receives the correct collection date, location, and environmental context for its own sample — not metadata from another sample.
+Both join keys are cast to `str` before merging to prevent type mismatches when pandas infers a numeric dtype for the `Proposal` column read from SQLite (since Proposal values are typically numeric).
+
+This ensures that when multiple samples from different proposals are processed together, each well receives the correct collection date, location, and environmental context for its own sample — not metadata from another sample.
 
 - **Geographic information**: Includes latitude, longitude, depth, elevation
 - **Temporal data**: Collection year, month, day
@@ -213,13 +215,15 @@ Custom plates (added via `custom_plate_names.txt`) may not have a corresponding 
 - A **warning** is printed listing the affected plates
 - Metadata fields for those wells are left **blank** in the SPITS output
 - The script **continues** and generates the SPITS file
-- To populate the missing fields, add the corresponding `Project`/`Sample` row to the `sample_metadata` table before re-running
+- To populate the missing fields, add the corresponding `Proposal`/`Sample` row to the `sample_metadata` table before re-running
 
 ### Required `sample_metadata` Columns for Join
 The following columns must exist in `sample_metadata` for the join to work:
 ```
-Project, Sample
+Proposal, Sample
 ```
 These are validated at startup by `validate_database_schema()`. If either is missing, the script exits with a FATAL ERROR before processing begins.
+
+> **Note**: The `Project` column has been removed from `sample_metadata`. `Proposal` now serves as the sole project identifier and is used as the join key when merging metadata onto selected wells.
 
 This script serves as the critical decision point in the workflow, translating FA quality results into actionable well selections for downstream processing and submission to external systems.

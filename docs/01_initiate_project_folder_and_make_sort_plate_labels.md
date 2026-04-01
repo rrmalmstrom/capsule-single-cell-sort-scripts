@@ -32,8 +32,7 @@ This is the **first script** in the laboratory workflow that initializes a new p
 Expected file: `sample_metadtata.csv` (note the intentional typo in filename)
 
 **Required columns:**
-- `Proposal`: Project proposal identifier
-- `Project`: Project name/identifier  
+- `Proposal`: Project proposal identifier (used as the primary project key throughout the workflow)
 - `Sample`: Sample identifier
 - `Number_of_sorted_plates`: Integer count of plates per sample
 
@@ -42,9 +41,11 @@ Expected file: `sample_metadtata.csv` (note the intentional typo in filename)
 - `Sample Isolated From`, `Latitude`, `Longitude`
 - `Depth (m)`, `Elevation (m)`, `Country`
 
+> **Note**: The `Project` column has been removed. `Proposal` now serves as the sole project identifier and is used to construct plate names (e.g., `BP9735_SitukAM.1`).
+
 ### Optional Input Files
 - **`custom_plate_names.txt`**: Custom plate names (one per line, <20 characters)
-- **`additional_standard_plates.txt`**: Additional plates for existing samples (format: `PROJECT_SAMPLE:COUNT`)
+- **`additional_standard_plates.txt`**: Additional plates for existing samples (format: `PROPOSAL_SAMPLE:COUNT`)
 
 ## Output Files
 
@@ -95,16 +96,16 @@ full_barcode = f"{base_barcode}-{next_number}"
 -- sample_metadata table
 CREATE TABLE sample_metadata (
     Proposal TEXT,
-    Project TEXT,
     Sample TEXT,
     Collection_Year INTEGER,
     -- ... other metadata columns
 );
 
--- individual_plates table  
+-- individual_plates table
+-- Note: the 'project' column stores the Proposal value (used as the project key)
 CREATE TABLE individual_plates (
     plate_name TEXT,
-    project TEXT,
+    project TEXT,      -- stores the Proposal value
     sample TEXT,
     plate_number INTEGER,
     is_custom BOOLEAN,
