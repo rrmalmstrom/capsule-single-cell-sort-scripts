@@ -817,7 +817,7 @@ def create_illumina_index_files(all_plate_layouts_with_indexes, individual_plate
                     'Illumina_index_set': row['Index_Set'],
                     'Illumina_source_well': row['Index_Well'],
                     'Lib_plate_name': row['Plate_ID'],
-                    'Lib_plate_ID': f"h{lib_plate_id}",
+                    'Lib_plate_ID': lib_plate_id,
                     'Lib_plate_well': row['Well'],
                     'Primer_volume_(uL)': 2
                 })
@@ -1207,7 +1207,7 @@ def create_fa_transfer_files(fa_well_assignments, individual_plates_df):
         output_rows = []
         for _, row in fa_wells_df.iterrows():
             output_rows.append({
-                'Library_Plate_Barcode': f"h{barcode}",
+                'Library_Plate_Barcode': barcode,
                 'Dilution_Plate_Barcode': f"{barcode}D",
                 'FA_Plate_Barcode': f"{barcode}F",
                 'Library_Well': row['Well'],
