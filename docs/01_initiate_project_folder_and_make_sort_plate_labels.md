@@ -29,12 +29,20 @@ This is the **first script** in the laboratory workflow that initializes a new p
 ## Input Requirements
 
 ### Sample Metadata CSV
-Expected file: `sample_metadtata.csv` (note the intentional typo in filename)
+Expected file: `sample_metadata.csv` (note the intentional typo in filename)
 
 **Required columns:**
 - `Proposal`: Project proposal identifier (used as the primary project key throughout the workflow)
 - `Sample`: Sample identifier
 - `Number_of_sorted_plates`: Integer count of plates per sample
+- `is_custom`: Boolean flag indicating whether this sample uses a custom plate layout (`True`/`False` or `1`/`0`)
+
+**`is_custom` column rules:**
+- **Required** — every row must have an explicit value; empty cells cause a FATAL ERROR
+- Accepted values (case-insensitive): `True`, `False`, `1`, `0`, `yes`, `no`
+- When `True`, all plates generated for that sample are marked as custom in the database
+- Custom plates require a corresponding layout CSV file in `2_library_creation/` for downstream processing (see Script 2)
+- Standard plates (`is_custom=False`) use `standard_sort_layout.csv` as their layout template
 
 **Optional columns:**
 - `Collection Year`, `Collection Month`, `Collection Day`
@@ -44,8 +52,9 @@ Expected file: `sample_metadtata.csv` (note the intentional typo in filename)
 > **Note**: The `Project` column has been removed. `Proposal` now serves as the sole project identifier and is used to construct plate names (e.g., `BP9735_SitukAM.1`).
 
 ### Optional Input Files
-- **`custom_plate_names.txt`**: Custom plate names (one per line, <20 characters)
 - **`additional_standard_plates.txt`**: Additional plates for existing samples (format: `PROPOSAL_SAMPLE:COUNT`)
+
+> **Note**: `custom_plate_names.txt` file-based input is **disabled**. Custom plate designation is now controlled entirely by the `is_custom` column in `sample_metadata.csv`. The underlying code is preserved in the script and can be re-enabled if needed.
 
 ## Output Files
 
@@ -138,7 +147,8 @@ python initiate_project_folder_and_make_sort_plate_labels.py REX12
 ```
 
 ### Interactive Prompts
-- "Add custom plates? (y/n)": Processes `custom_plate_names.txt` if available
 - "Add additional standard plates? (y/n)": Processes `additional_standard_plates.txt` if available
+
+> **Note**: The "Add custom plates? (y/n)" prompt has been removed. Custom plates are now designated via the `is_custom` column in `sample_metadata.csv`.
 
 This script establishes the foundation for the entire laboratory workflow, ensuring proper project initialization, unique plate identification, and organized file management that supports all downstream processing steps.

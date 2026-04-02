@@ -38,7 +38,7 @@ import create_capsule_spits as s4
 # Helpers
 # ===========================================================================
 
-def make_csv_file(content: str, tmp_path: Path, filename: str = "sample_metadtata.csv") -> Path:
+def make_csv_file(content: str, tmp_path: Path, filename: str = "sample_metadata.csv") -> Path:
     """Write a CSV string to a temp file and return its path."""
     p = tmp_path / filename
     p.write_text(content)

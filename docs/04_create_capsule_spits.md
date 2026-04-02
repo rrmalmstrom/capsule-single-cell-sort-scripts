@@ -210,12 +210,8 @@ This ensures that when multiple samples from different proposals are processed t
 - **Temporal data**: Collection year, month, day
 - **Environmental context**: Sample source and isolation details
 
-### Custom Plates Without Metadata
-Custom plates (added via `custom_plate_names.txt`) may not have a corresponding row in `sample_metadata` if metadata was not provided at the time the plate was created. In this case:
-- A **warning** is printed listing the affected plates
-- Metadata fields for those wells are left **blank** in the SPITS output
-- The script **continues** and generates the SPITS file
-- To populate the missing fields, add the corresponding `Proposal`/`Sample` row to the `sample_metadata` table before re-running
+### Custom Plates and Metadata
+Custom plates are now designated via the `is_custom` column in `sample_metadata.csv` (Script 1). Because all samples — including custom ones — must be present in the metadata CSV before Script 1 runs, every plate in the database is guaranteed to have a corresponding `Proposal`/`Sample` row in `sample_metadata`. The previous scenario where custom plates could be added without metadata (via `custom_plate_names.txt`) no longer applies.
 
 ### Required `sample_metadata` Columns for Join
 The following columns must exist in `sample_metadata` for the join to work:

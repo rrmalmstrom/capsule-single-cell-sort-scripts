@@ -16,9 +16,10 @@ CRITICAL REQUIREMENTS:
 - Creates success markers for workflow manager integration
 
 Features:
-- Automatic detection of sample metadata CSV files (sample_metadtata.csv)
-- File-based input for custom plates (custom_plate_names.txt)
+- Automatic detection of sample metadata CSV files (sample_metadata.csv)
+- is_custom column in sample metadata CSV controls which samples use custom plate layouts
 - File-based input for additional standard plates (additional_standard_plates.txt)
+- NOTE: custom_plate_names.txt file-based input is DISABLED; use is_custom column in CSV instead
 - Simplified incremental barcode generation (e.g., ABC12-1, ABC12-2, ABC12-3)
 - Two-table database architecture for better data organization
 - Consolidated folder management with automatic creation of workflow structure
@@ -131,7 +132,7 @@ def read_sample_csv(csv_path):
         df = pd.read_csv(csv_path, encoding='utf-8-sig')
         
         # Validate required columns
-        required_cols = ['Proposal', 'Sample', 'Number_of_sorted_plates']
+        required_cols = ['Proposal', 'Sample', 'Number_of_sorted_plates', 'is_custom']
         missing = [col for col in required_cols if col not in df.columns]
         
         if missing:
@@ -139,6 +140,7 @@ def read_sample_csv(csv_path):
             print(f"Required columns: {required_cols}")
             print(f"Found columns: {list(df.columns)}")
             print("Laboratory automation requires exact column names for safety.")
+            print("NOTE: 'is_custom' is now a required column. Set to True/False or 1/0 for each sample.")
             sys.exit()
         
         # Validate data types
@@ -148,6 +150,31 @@ def read_sample_csv(csv_path):
             print(f"FATAL ERROR: Invalid data in 'Number_of_sorted_plates' column: {e}")
             print("All values must be integers for laboratory automation safety.")
             sys.exit()
+        
+        # Validate and normalize is_custom column
+        valid_true_values  = {'true',  '1', 'yes'}
+        valid_false_values = {'false', '0', 'no'}
+        valid_values = valid_true_values | valid_false_values
+        
+        normalized_is_custom = []
+        for idx, val in enumerate(df['is_custom']):
+            # Check for empty / NaN
+            if pd.isna(val) or str(val).strip() == '':
+                print(f"FATAL ERROR: Empty value in 'is_custom' column at row {idx + 2} (CSV row {idx + 2})")
+                print("Every sample must have an explicit is_custom value: True, False, 1, or 0.")
+                print("Laboratory automation requires complete metadata for safety.")
+                sys.exit()
+            
+            str_val = str(val).strip().lower()
+            if str_val not in valid_values:
+                print(f"FATAL ERROR: Invalid value '{val}' in 'is_custom' column at row {idx + 2}")
+                print("Accepted values: True, False, 1, 0, yes, no (case-insensitive)")
+                print("Laboratory automation requires valid boolean values for safety.")
+                sys.exit()
+            
+            normalized_is_custom.append(str_val in valid_true_values)
+        
+        df['is_custom'] = normalized_is_custom
         
         print(f"✅ Read {len(df)} samples from CSV file")
         return df
@@ -178,6 +205,7 @@ def make_plate_names(sample_df):
         proposal = row['Proposal']
         sample = row['Sample']
         num_plates = int(row['Number_of_sorted_plates'])
+        is_custom = bool(row['is_custom'])
         
         # Generate plate names for each sample
         for i in range(1, num_plates + 1):
@@ -186,7 +214,7 @@ def make_plate_names(sample_df):
                 'project': proposal,
                 'sample': sample,
                 'plate_number': i,
-                'is_custom': False
+                'is_custom': is_custom
             })
     
     result_df = pd.DataFrame(plates)
@@ -519,7 +547,7 @@ def detect_sample_metadata_csv():
     Raises:
         SystemExit: If no valid sample metadata CSV found
     """
-    # Complete list of expected headers from sample_metadtata.csv format
+    # Complete list of expected headers from sample_metadata.csv format
     expected_headers = [
         'Proposal', 'Sample', 'Collection Year', 'Collection Month',
         'Collection Day', 'Sample Isolated From', 'Latitude', 'Longitude',
@@ -529,8 +557,8 @@ def detect_sample_metadata_csv():
     # Required subset for processing
     required_headers = ['Proposal', 'Sample', 'Number_of_sorted_plates']
     
-    # Look for sample_metadtata.csv specifically first
-    sample_metadata_file = Path('sample_metadtata.csv')
+    # Look for sample_metadata.csv specifically first
+    sample_metadata_file = Path('sample_metadata.csv')
     if sample_metadata_file.exists():
         try:
             df = pd.read_csv(sample_metadata_file, encoding='utf-8-sig')
@@ -556,12 +584,12 @@ def detect_sample_metadata_csv():
             print("Laboratory automation requires valid CSV format for safety.")
             sys.exit()
     
-    # If sample_metadtata.csv doesn't exist, search for other CSV files
-    csv_files = [f for f in Path('.').glob('*.csv') if f.name != 'sample_metadtata.csv']
+    # If sample_metadata.csv doesn't exist, search for other CSV files
+    csv_files = [f for f in Path('.').glob('*.csv') if f.name != 'sample_metadata.csv']
     
     if not csv_files:
         print("FATAL ERROR: No sample metadata CSV file found in working directory")
-        print("Expected: 'sample_metadtata.csv' or other CSV with required headers")
+        print("Expected: 'sample_metadata.csv' or other CSV with required headers")
         print(f"Required columns: {required_headers}")
         print("Laboratory automation requires valid input files for safety.")
         sys.exit()
@@ -613,91 +641,70 @@ def get_csv_file():
 def read_custom_plates_file(is_first_run=True):
     """
     Read custom plate names from 'custom_plate_names.txt' file.
-    Location depends on whether this is a first run or subsequent run.
+    
+    NOTE: This function is DISABLED. Custom plate designation is now controlled
+    by the 'is_custom' column in the sample metadata CSV file (sample_metadata.csv).
+    Set is_custom=True for any sample whose plates require a custom layout file.
+    
+    This function is preserved here for reference and potential future re-enablement.
+    To re-enable file-based custom plate input, restore the body below and update
+    get_custom_plates() and the process_first_run() / process_subsequent_run() callers.
     
     Args:
         is_first_run (bool): True for first runs (look in working directory),
                             False for subsequent runs (look in 1_make_barcode_labels folder)
     
     Returns:
-        list: List of validated custom plate names
-        
-    Raises:
-        SystemExit: If file format is invalid or multiple custom plate files found
+        list: Always returns empty list (feature disabled)
     """
-    # Determine where to look for input files based on run type
-    if is_first_run:
-        # First run: look in working directory
-        search_dir = Path('.')
-        custom_file = Path('custom_plate_names.txt')
-        location_desc = "working directory"
-    else:
-        # Subsequent run: look in 1_make_barcode_labels folder
-        search_dir = Path('1_make_barcode_labels')
-        custom_file = Path('1_make_barcode_labels/custom_plate_names.txt')
-        location_desc = "1_make_barcode_labels folder"
-    
-    # Check for multiple custom plate files in search directory
-    custom_files = list(search_dir.glob('*custom*plate*names*.txt'))
-    custom_files.extend(search_dir.glob('custom_plate_names.txt'))
-    custom_files.extend(search_dir.glob('*custom*plates*.txt'))
-    
-    # Remove duplicates and filter to actual files
-    custom_files = list(set([f for f in custom_files if f.is_file()]))
-    
-    if len(custom_files) > 1:
-        print(f"FATAL ERROR: Multiple custom plate files found in {location_desc}")
-        print("Found custom plate files:")
-        for custom_file_found in custom_files:
-            print(f"  - {custom_file_found}")
-        print("Laboratory automation requires exactly one custom plate file for safety.")
-        print(f"Please ensure only 'custom_plate_names.txt' exists in the {location_desc}.")
-        sys.exit()
-    
-    if not custom_file.exists():
-        print(f"FATAL ERROR: Custom plates requested but 'custom_plate_names.txt' file not found in {location_desc}")
-        print("")
-        print("To fix this error:")
-        if is_first_run:
-            print("1. Create a file named 'custom_plate_names.txt' in the working directory")
-        else:
-            print("1. Create a file named 'custom_plate_names.txt' in the 1_make_barcode_labels folder")
-        print("2. Add one plate name per line (each name must be < 20 characters)")
-        print("3. Example file content:")
-        print("   Rex_badass_custom.1")
-        print("   MA_test_44.1")
-        print("   Custom_Plate_Name")
-        print("")
-        print("Laboratory automation requires valid input files for safety.")
-        sys.exit()
-    
-    try:
-        with open(custom_file, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-        
-        plates = []
-        for line_num, line in enumerate(lines, 1):
-            name = line.strip()
-            if not name:  # Skip empty lines
-                continue
-                
-            # Validate plate name length
-            if len(name) >= 20:
-                print(f"FATAL ERROR: Custom plate name too long (>= 20 chars) on line {line_num}: {name}")
-                print("Laboratory automation requires valid plate names for safety.")
-                sys.exit()
-            
-            plates.append(name)
-        
-        if plates:
-            print(f"✅ Read {len(plates)} custom plate names from {custom_file}")
-        
-        return plates
-        
-    except Exception as e:
-        print(f"FATAL ERROR: Could not read custom plates file {custom_file}: {e}")
-        print("Laboratory automation requires valid input files for safety.")
-        sys.exit()
+    # --- CUSTOM PLATE FILE INPUT DISABLED ---
+    # Custom plates are now designated via the 'is_custom' column in sample_metadata.csv.
+    # The original file-reading implementation is preserved below for reference.
+    #
+    # if is_first_run:
+    #     search_dir = Path('.')
+    #     custom_file = Path('custom_plate_names.txt')
+    #     location_desc = "working directory"
+    # else:
+    #     search_dir = Path('1_make_barcode_labels')
+    #     custom_file = Path('1_make_barcode_labels/custom_plate_names.txt')
+    #     location_desc = "1_make_barcode_labels folder"
+    #
+    # custom_files = list(search_dir.glob('*custom*plate*names*.txt'))
+    # custom_files.extend(search_dir.glob('custom_plate_names.txt'))
+    # custom_files.extend(search_dir.glob('*custom*plates*.txt'))
+    # custom_files = list(set([f for f in custom_files if f.is_file()]))
+    #
+    # if len(custom_files) > 1:
+    #     print(f"FATAL ERROR: Multiple custom plate files found in {location_desc}")
+    #     ...
+    #     sys.exit()
+    #
+    # if not custom_file.exists():
+    #     print(f"FATAL ERROR: Custom plates requested but 'custom_plate_names.txt' not found")
+    #     ...
+    #     sys.exit()
+    #
+    # try:
+    #     with open(custom_file, 'r', encoding='utf-8') as f:
+    #         lines = f.readlines()
+    #     plates = []
+    #     for line_num, line in enumerate(lines, 1):
+    #         name = line.strip()
+    #         if not name:
+    #             continue
+    #         if len(name) >= 20:
+    #             print(f"FATAL ERROR: Custom plate name too long on line {line_num}: {name}")
+    #             sys.exit()
+    #         plates.append(name)
+    #     if plates:
+    #         print(f"✅ Read {len(plates)} custom plate names from {custom_file}")
+    #     return plates
+    # except Exception as e:
+    #     print(f"FATAL ERROR: Could not read custom plates file {custom_file}: {e}")
+    #     sys.exit()
+
+    return []
 
 
 def read_additional_standard_plates_file(is_first_run=True):
@@ -843,33 +850,34 @@ def get_custom_plates(is_first_run=True):
     """
     Interactive function to ask user if they want custom plates and read from file.
     
-    Custom plate names file format (custom_plate_names.txt):
-    - One plate name per line
-    - Each name must be < 20 characters
-    - Empty lines are ignored
-    - Example format:
-        Rex_badass_custom.1
-        MA_test_44.1
-        Custom_Plate_Name
+    NOTE: This interactive prompt is DISABLED. Custom plate designation is now
+    controlled by the 'is_custom' column in the sample metadata CSV file.
+    Users set is_custom=True/False for each sample directly in sample_metadata.csv.
+    
+    This function is preserved for reference and potential future re-enablement.
+    To re-enable, restore the while loop below and update the callers in
+    process_first_run() and process_subsequent_run().
     
     Args:
         is_first_run (bool): True for first runs, False for subsequent runs
     
     Returns:
-        list: List of custom plate names, or empty list if user declines
+        list: Always returns empty list (feature disabled)
     """
-    # Ask user interactively
-    while True:
-        response = input("Add custom plates? (y/n): ").lower().strip()
-        if response in ['y', 'yes']:
-            # User wants custom plates - look for file
-            print("Looking for 'custom_plate_names.txt' file...")
-            return read_custom_plates_file(is_first_run)
-        elif response in ['n', 'no']:
-            # User doesn't want custom plates
-            return []
-        else:
-            print("Please enter 'y' for yes or 'n' for no.")
+    # --- CUSTOM PLATES INTERACTIVE PROMPT DISABLED ---
+    # Custom plates are now designated via the 'is_custom' column in sample_metadata.csv.
+    # The original interactive implementation is preserved below for reference.
+    #
+    # while True:
+    #     response = input("Add custom plates? (y/n): ").lower().strip()
+    #     if response in ['y', 'yes']:
+    #         print("Looking for 'custom_plate_names.txt' file...")
+    #         return read_custom_plates_file(is_first_run)
+    #     elif response in ['n', 'no']:
+    #         return []
+    #     else:
+    #         print("Please enter 'y' for yes or 'n' for no.")
+    return []
 
 
 def create_project_folder_structure():
@@ -990,9 +998,9 @@ def archive_database_file(db_path, folders):
     archive_dir = folders['archived_files']
     
     # Create archive name with timestamp as suffix
-    # sample_metadtata.db → sample_metadtata_2026_02_24-Time14-30-25.db
+    # sample_metadata.db → sample_metadata_2026_02_24-Time14-30-25.db
     db_path = Path(db_path)
-    stem = db_path.stem  # "sample_metadtata"
+    stem = db_path.stem  # "sample_metadata"
     suffix = db_path.suffix  # ".db"
     archive_name = f"{stem}_{timestamp}{suffix}"
     archive_path = archive_dir / archive_name
@@ -1047,19 +1055,20 @@ def manage_input_files(folders, is_first_run=True, custom_plates_processed=False
         # Subsequent run: look in 1_make_barcode_labels folder
         search_dir = Path('1_make_barcode_labels')
     
-    # Move custom plate files with timestamp (only if they were processed)
-    if custom_plates_processed:
-        custom_files = list(search_dir.glob('custom_plate_names.txt')) + list(search_dir.glob('custom_sort_plate_names.txt'))
-        for custom_file in custom_files:
-            if custom_file.exists():
-                # Add timestamp to filename: custom_plate_names.txt -> custom_plate_names_2026_02_26-Time14-30-25.txt
-                stem = custom_file.stem
-                suffix = custom_file.suffix
-                timestamped_name = f"{stem}_{timestamp}{suffix}"
-                destination = folders['custom_plates'] / timestamped_name
-                shutil.move(str(custom_file), str(destination))
-                moved_files.append(str(destination))
-                # File moved silently
+    # --- CUSTOM PLATE FILE ARCHIVING DISABLED ---
+    # custom_plate_names.txt is no longer used; is_custom is set via sample_metadata.csv.
+    # The original file-moving logic is preserved below for reference.
+    #
+    # if custom_plates_processed:
+    #     custom_files = list(search_dir.glob('custom_plate_names.txt')) + list(search_dir.glob('custom_sort_plate_names.txt'))
+    #     for custom_file in custom_files:
+    #         if custom_file.exists():
+    #             stem = custom_file.stem
+    #             suffix = custom_file.suffix
+    #             timestamped_name = f"{stem}_{timestamp}{suffix}"
+    #             destination = folders['custom_plates'] / timestamped_name
+    #             shutil.move(str(custom_file), str(destination))
+    #             moved_files.append(str(destination))
     
     # Move additional standard plate files with timestamp (only if they were processed)
     if additional_plates_processed:
@@ -1096,8 +1105,8 @@ def archive_csv_file(csv_file_path, folders):
     archive_dir = folders['archived_files']
     
     # Create archive name with timestamp as suffix
-    # sample_metadtata.csv → sample_metadtata_2026_02_24-Time14-30-25.csv
-    stem = csv_file_path.stem  # "sample_metadtata"
+    # sample_metadata.csv → sample_metadata_2026_02_24-Time14-30-25.csv
+    stem = csv_file_path.stem  # "sample_metadata"
     suffix = csv_file_path.suffix  # ".csv"
     archive_name = f"{stem}_{timestamp}{suffix}"
     archive_path = archive_dir / archive_name
@@ -1194,18 +1203,22 @@ def process_first_run():
     custom_plates_processed = False
     additional_plates_processed = False  # Never processed on first run
     
-    # Add custom plates if requested (first run)
-    custom_plates = get_custom_plates(is_first_run=True)
-    if custom_plates:
-        custom_df = pd.DataFrame([
-            {'plate_name': name, 'project': 'CUSTOM', 'sample': 'CUSTOM',
-             'plate_number': 1, 'is_custom': True}
-            for name in custom_plates
-        ])
-        plates_df = pd.concat([plates_df, custom_df], ignore_index=True)
-        print(f"✅ Added {len(custom_plates)} custom plates")
-        custom_plates_processed = True
-    
+    # --- CUSTOM PLATES FILE INPUT DISABLED ---
+    # Custom plates are now designated via the 'is_custom' column in sample_metadata.csv.
+    # make_plate_names() already sets is_custom per plate based on the CSV column.
+    # The original file-based custom plate addition is preserved below for reference.
+    #
+    # custom_plates = get_custom_plates(is_first_run=True)
+    # if custom_plates:
+    #     custom_df = pd.DataFrame([
+    #         {'plate_name': name, 'project': 'CUSTOM', 'sample': 'CUSTOM',
+    #          'plate_number': 1, 'is_custom': True}
+    #         for name in custom_plates
+    #     ])
+    #     plates_df = pd.concat([plates_df, custom_df], ignore_index=True)
+    #     print(f"✅ Added {len(custom_plates)} custom plates")
+    #     custom_plates_processed = True
+
     return sample_df, plates_df, custom_plates_processed, additional_plates_processed
 
 
@@ -1293,39 +1306,44 @@ def process_subsequent_run(existing_sample_df, existing_plates_df):
     
     # Ask for additional standard plates (only on subsequent runs)
     additional_plates = get_additional_standard_plates(is_first_run=False)
-    
-    # Ask for custom plates (available on all runs, subsequent run)
-    custom_plates = get_custom_plates(is_first_run=False)
-    
+
+    # --- CUSTOM PLATES FILE INPUT DISABLED ---
+    # Custom plates are now designated via the 'is_custom' column in sample_metadata.csv.
+    # The original interactive custom plate addition is preserved below for reference.
+    #
+    # custom_plates = get_custom_plates(is_first_run=False)
+    #
+    # if not additional_plates and not custom_plates:
+    #     return existing_sample_df, pd.DataFrame(), custom_plates_processed, additional_plates_processed
+    #
+    # if custom_plates:
+    #     custom_df = pd.DataFrame([
+    #         {'plate_name': name, 'project': 'CUSTOM', 'sample': 'CUSTOM',
+    #          'plate_number': 1, 'is_custom': True}
+    #         for name in custom_plates
+    #     ])
+    #     if plates_df.empty:
+    #         plates_df = custom_df
+    #     else:
+    #         plates_df = pd.concat([plates_df, custom_df], ignore_index=True)
+    #     print(f"✅ Added {len(custom_plates)} custom plates")
+    #     custom_plates_processed = True
+
     # Check if user wants to add any plates
-    if not additional_plates and not custom_plates:
+    if not additional_plates:
         return existing_sample_df, pd.DataFrame(), custom_plates_processed, additional_plates_processed
-    
+
     # Process additional standard plates
     plates_df = pd.DataFrame()
     sample_df = existing_sample_df  # Use existing sample metadata
-    
+
     if additional_plates:
         additional_df = process_additional_standard_plates(existing_sample_df, additional_plates, existing_plates_df)
         plates_df = additional_df
         additional_plates_processed = True
-    
-    # Process custom plates
-    if custom_plates:
-        custom_df = pd.DataFrame([
-            {'plate_name': name, 'project': 'CUSTOM', 'sample': 'CUSTOM',
-             'plate_number': 1, 'is_custom': True}
-            for name in custom_plates
-        ])
-        if plates_df.empty:
-            plates_df = custom_df
-        else:
-            plates_df = pd.concat([plates_df, custom_df], ignore_index=True)
-        print(f"✅ Added {len(custom_plates)} custom plates")
-        custom_plates_processed = True
-    
+
     # Plates prepared for processing
-    
+
     return sample_df, plates_df, custom_plates_processed, additional_plates_processed
 
 

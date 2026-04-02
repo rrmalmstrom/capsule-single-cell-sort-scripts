@@ -41,7 +41,7 @@ The older scripts (`make_ESP_smear_analysis_file.py` and `relabel_lib_plates_for
 The scripts must be run in numerical order (1→2→3→4→5→6) as each script depends on outputs from previous scripts.
 
 ### Key Input Files
-- **Script 1**: `sample_metadtata.csv` (sample metadata)
+- **Script 1**: `sample_metadata.csv` (sample metadata)
 - **Script 2**: `library_sort_plates.txt` (plates to process)
 - **Script 3**: FA instrument output files in subdirectories
 - **Script 4**: `plate_selection.csv` (user-created selection criteria)
