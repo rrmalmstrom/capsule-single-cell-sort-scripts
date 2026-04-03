@@ -26,7 +26,8 @@ Features:
 - Timestamped file movement to prevent overwrites on subsequent runs
 - Smart file location detection (working directory for first runs, organized folders for subsequent runs)
 - CSV file archiving and regeneration
-- BarTender file generation with reverse order and interleaved format
+- BarTender sort plate label file generation with reverse order (no blank separator lines)
+- BarTender tube label file generation (BARTENDER_tube_labels_*.txt) for unique samples per run
 
 Database Schema (Two-Table Architecture):
 - sample_metadata table: Project and sample information
@@ -68,6 +69,7 @@ from sqlalchemy import create_engine, text
 CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 LETTERS_ONLY = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 BARTENDER_HEADER = '%BTW% /AF="\\\\BARTENDER\\shared\\templates\\ECHO_BCode8.btw" /D="%Trigger File Name%" /PRN="bcode8" /R=3 /P /DD\r\n\r\n%END%\r\n\r\n\r\n'
+BARTENDER_TUBE_HEADER = '%BTW% /AF="\\\\BARTENDER\\shared\\templates\\JGI_Label_BCode5.btw" /D="%Trigger File Name%" /PRN="bcode85" /R=3 /P /DD\r\n\r\n%END%\r\n\r\n\r\n'
 
 # Database and file names
 DATABASE_NAME = "project_summary.db"
@@ -526,8 +528,9 @@ def read_from_database(db_path):
 
 def make_bartender_file(df, output_path):
     """
-    Generate BarTender label file with simplified barcode system.
+    Generate BarTender sort plate label file with simplified barcode system.
     Format: Reverse order (highest to lowest), one line per plate with barcode and plate name.
+    No blank separator lines between plates.
     
     Args:
         df (pd.DataFrame): DataFrame with barcode data (must have 'barcode' and 'plate_name' columns)
@@ -547,17 +550,25 @@ def make_bartender_file(df, output_path):
             df_sorted['barcode_num'] = df_sorted['barcode'].str.split('-').str[1].astype(int)
             df_sorted = df_sorted.sort_values('barcode_num', ascending=False)
             
-            # One line per plate in reverse order with separators
-            for i, (_, row) in enumerate(df_sorted.iterrows()):
-                barcode = row['barcode']
-                plate_name = row['plate_name']
+            # Group plates by sample (project + sample combination) to insert blank
+            # separator lines between each sample's set of plates
+            df_sorted['sample_group'] = df_sorted['project'].astype(str) + '_' + df_sorted['sample'].astype(str)
+            sample_groups = df_sorted['sample_group'].unique()
+            
+            first_group = True
+            for group in sample_groups:
+                group_rows = df_sorted[df_sorted['sample_group'] == group]
                 
-                # write barcode label and human readable plate name label
-                f.write(f'{barcode},"{plate_name}"\r\n')
-                
-                # Add blank separator line between plates (except after last plate)
-                if i < len(df_sorted) - 1:
+                # Add blank separator line between sample groups (not before the first group)
+                if not first_group:
                     f.write(',\r\n')
+                first_group = False
+                
+                # Write all plates for this sample group
+                for _, row in group_rows.iterrows():
+                    barcode = row['barcode']
+                    plate_name = row['plate_name']
+                    f.write(f'{barcode},"{plate_name}"\r\n')
             
             # Add proper trailing empty lines for BarTender compatibility
             f.write('\r\n')
@@ -566,6 +577,64 @@ def make_bartender_file(df, output_path):
         
     except Exception as e:
         print(f"FATAL ERROR: Could not create BarTender file {output_path}: {e}")
+        print("Laboratory automation requires valid label files for safety.")
+        sys.exit()
+
+
+def make_bartender_tube_labels_file(df, output_path):
+    """
+    Generate BarTender tube label file for unique samples in the new plates.
+    Format: For each unique Proposal+Group_or_abrvSample combination (in descending order),
+    write 3 lines representing SPC_PTA (70%EtOH), SPC (60%Glycerol), and Cells (10%Glycerol) tubes.
+    No blank separator lines between label groups.
+    Uses JGI_Label_BCode5.btw template and bcode85 printer.
+    
+    Args:
+        df (pd.DataFrame): DataFrame with plate data (must have 'project', 'sample' columns)
+        output_path (Path): Path for output file
+        
+    Raises:
+        SystemExit: If file creation fails
+    """
+    try:
+        with open(output_path, 'w', newline='') as f:
+            # Write tube label header
+            f.write(BARTENDER_TUBE_HEADER)
+            
+            # Get unique Proposal+Group_or_abrvSample combinations from new plates,
+            # ordered to match the sort plate label file (descending by max barcode number).
+            # Extract the max barcode number per sample group to determine sort order.
+            df_with_num = df.copy()
+            df_with_num['barcode_num'] = df_with_num['barcode'].str.split('-').str[1].astype(int)
+            sample_max_barcode = df_with_num.groupby(['project', 'sample'])['barcode_num'].max().reset_index()
+            sample_max_barcode = sample_max_barcode.sort_values('barcode_num', ascending=False)
+            unique_samples = sample_max_barcode[['project', 'sample']]
+            
+            # Write 3 label lines per unique sample with blank separator lines between groups.
+            # The blank separator line has 6 commas to match the 7-field tube label format.
+            first_group = True
+            for _, row in unique_samples.iterrows():
+                proposal = row['project']
+                sample = row['sample']
+                combined = f"{proposal}_{sample}"
+                
+                # Add blank separator line between sample groups (not before the first group)
+                if not first_group:
+                    f.write(',,,,,,\r\n')
+                first_group = False
+                
+                # Three tube labels per sample: SPC_PTA, SPC, Cells (descending _3, _2, _1)
+                f.write(f'{combined},{proposal},{sample},SPC_PTA,70%EtOH,,{sample}_3\r\n')
+                f.write(f'{combined},{proposal},{sample},SPC,60%Glycerol,,{sample}_2\r\n')
+                f.write(f'{combined},{proposal},{sample},Cells,10%Glycerol,,{sample}_1\r\n')
+            
+            # Add proper trailing empty lines for BarTender compatibility
+            f.write('\r\n')
+        
+        # BarTender tube label file created silently
+        
+    except Exception as e:
+        print(f"FATAL ERROR: Could not create BarTender tube label file {output_path}: {e}")
         print("Laboratory automation requires valid label files for safety.")
         sys.exit()
 
@@ -1438,9 +1507,10 @@ def finalize_files_and_database(sample_df, final_plates_df, new_plates_df, folde
     # Smart database save - only update what actually changes
     save_to_database_smart(sample_df, new_plates_df, DATABASE_NAME, is_first_run, existing_sample_df)
     
-    # Generate BarTender file with timestamp
+    # Generate BarTender files with timestamp
     timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
     bartender_filename = f"BARTENDER_sort_plate_labels_{timestamp}.txt"
+    bartender_tube_filename = f"BARTENDER_tube_labels_{timestamp}.txt"
     
     # Use only new plates for BarTender file generation
     if not new_plates_df.empty:
@@ -1449,9 +1519,11 @@ def finalize_files_and_database(sample_df, final_plates_df, new_plates_df, folde
         plates_for_bartender = final_plates_df
     
     make_bartender_file(plates_for_bartender, bartender_filename)
+    make_bartender_tube_labels_file(plates_for_bartender, bartender_tube_filename)
     
     # File Management - Organize output and input files
     manage_bartender_file(bartender_filename, folders)
+    manage_bartender_file(bartender_tube_filename, folders)
     manage_input_files(folders, is_first_run, custom_plates_processed, additional_plates_processed)
     
     # CSV Management - Archive and create updated CSV files

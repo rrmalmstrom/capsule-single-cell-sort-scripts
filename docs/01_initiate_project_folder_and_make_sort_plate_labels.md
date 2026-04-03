@@ -60,10 +60,26 @@ Expected file: `sample_metadata.csv` (note the intentional typo in filename)
 ## Output Files
 
 ### BarTender Label Files
-- **Location**: `1_make_barcode_labels/bartender_barcode_labels/`
-- **Format**: BarTender-compatible with header and reverse-ordered entries
-- **Content**: Interleaved Echo/Hamilton pairs with separators
-- **Filename**: `BARTENDER_sort_plate_labels_{timestamp}.txt`
+Both BarTender files are written to `1_make_barcode_labels/bartender_barcode_labels/` and use the same timestamp suffix.
+
+#### Sort Plate Labels (`BARTENDER_sort_plate_labels_{timestamp}.txt`)
+- **Template**: `ECHO_BCode8.btw` / printer `bcode8`
+- **Content**: One line per plate in descending barcode number order, grouped by sample
+- **Format**: `{barcode},"{plate_name}"` (e.g., `WRYS9-15,"509048_35KT0.5"`)
+- **Separators**: A single `,` blank line between each sample's group of plates
+- **Scope**: Only plates added in the current run
+
+#### Tube Labels (`BARTENDER_tube_labels_{timestamp}.txt`)
+- **Template**: `JGI_Label_BCode5.btw` / printer `bcode85`
+- **Content**: Three lines per unique `Proposal`+`Group_or_abrvSample` combination, in the same descending order as the sort plate label file
+- **Format per sample group** (3 lines):
+  ```
+  {Proposal}_{Sample},{Proposal},{Sample},SPC_PTA,70%EtOH,,{Sample}_3
+  {Proposal}_{Sample},{Proposal},{Sample},SPC,60%Glycerol,,{Sample}_2
+  {Proposal}_{Sample},{Proposal},{Sample},Cells,10%Glycerol,,{Sample}_1
+  ```
+- **Separators**: A `,,,,,,` blank line (6 commas, matching the 7-field format) between each sample's group of 3 lines
+- **Scope**: Only unique samples from plates added in the current run
 
 ### Database Files
 - **`project_summary.db`**: Main SQLite database with two tables
