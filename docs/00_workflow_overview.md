@@ -11,8 +11,8 @@ This laboratory workflow consists of **six Python scripts** that execute in sequ
 ### Database-Driven Design
 - **Central database**: `project_summary.db` (SQLite) serves as the single source of truth
 - **Three-table architecture**:
-  - `sample_metadata`: Proposal and collection information (the `Project` column has been removed; `Proposal` is the sole project identifier)
-  - `individual_plates`: Plate inventory with barcodes and status tracking
+  - `sample_metadata`: Proposal and collection information. Key columns: `Proposal` (sole project identifier), `Group_or_abrvSample` (abbreviated name used for plate naming, max 8 alphanumeric chars), `Sample_full` (full sample identifier used in SPITS name generation). The old `Sample` and `Project` columns have been removed.
+  - `individual_plates`: Plate inventory with barcodes and status tracking. The `sample` column stores the `Group_or_abrvSample` value.
   - `master_plate_data`: Comprehensive well-level data with index assignments and quality results
 - **Incremental updates**: Each script enhances the database with additional information
 - **Audit trail**: Timestamped archiving preserves processing history

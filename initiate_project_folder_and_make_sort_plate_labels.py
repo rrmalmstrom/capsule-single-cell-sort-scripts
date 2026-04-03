@@ -132,7 +132,7 @@ def read_sample_csv(csv_path):
         df = pd.read_csv(csv_path, encoding='utf-8-sig')
         
         # Validate required columns
-        required_cols = ['Proposal', 'Sample', 'Number_of_sorted_plates', 'is_custom']
+        required_cols = ['Proposal', 'Group_or_abrvSample', 'Sample_full', 'Number_of_sorted_plates', 'is_custom']
         missing = [col for col in required_cols if col not in df.columns]
         
         if missing:
@@ -141,6 +141,7 @@ def read_sample_csv(csv_path):
             print(f"Found columns: {list(df.columns)}")
             print("Laboratory automation requires exact column names for safety.")
             print("NOTE: 'is_custom' is now a required column. Set to True/False or 1/0 for each sample.")
+            print("NOTE: 'Sample' column has been replaced by 'Group_or_abrvSample' (short/abbreviated name) and 'Sample_full' (full sample name).")
             sys.exit()
         
         # Validate data types
@@ -175,7 +176,39 @@ def read_sample_csv(csv_path):
             normalized_is_custom.append(str_val in valid_true_values)
         
         df['is_custom'] = normalized_is_custom
-        
+
+        # Validate Proposal and Group_or_abrvSample: non-empty, alphanumeric only, max 8 characters
+        for idx, row in df.iterrows():
+            csv_row = idx + 2  # 1-based header + 1-based data row
+
+            proposal_val = str(row['Proposal']).strip() if not pd.isna(row['Proposal']) else ''
+            if not proposal_val:
+                print(f"FATAL ERROR: Empty value in 'Proposal' column at row {csv_row}")
+                print("Proposal must be a non-empty alphanumeric string (letters and digits only, no symbols, max 8 characters).")
+                sys.exit()
+            if len(proposal_val) > 8:
+                print(f"FATAL ERROR: Value '{proposal_val}' in 'Proposal' column at row {csv_row} exceeds 8 characters (length: {len(proposal_val)})")
+                print("Proposal must be 8 characters or fewer.")
+                sys.exit()
+            if not proposal_val.isalnum():
+                print(f"FATAL ERROR: Invalid value '{proposal_val}' in 'Proposal' column at row {csv_row}")
+                print("Proposal must contain only alphanumeric characters (letters and digits, no symbols or spaces).")
+                sys.exit()
+
+            sample_val = str(row['Group_or_abrvSample']).strip() if not pd.isna(row['Group_or_abrvSample']) else ''
+            if not sample_val:
+                print(f"FATAL ERROR: Empty value in 'Group_or_abrvSample' column at row {csv_row}")
+                print("Group_or_abrvSample must be a non-empty alphanumeric string (letters and digits only, no symbols, max 8 characters).")
+                sys.exit()
+            if len(sample_val) > 8:
+                print(f"FATAL ERROR: Value '{sample_val}' in 'Group_or_abrvSample' column at row {csv_row} exceeds 8 characters (length: {len(sample_val)})")
+                print("Group_or_abrvSample must be 8 characters or fewer.")
+                sys.exit()
+            if not sample_val.isalnum():
+                print(f"FATAL ERROR: Invalid value '{sample_val}' in 'Group_or_abrvSample' column at row {csv_row}")
+                print("Group_or_abrvSample must contain only alphanumeric characters (letters and digits, no symbols or spaces).")
+                sys.exit()
+
         print(f"✅ Read {len(df)} samples from CSV file")
         return df
         
@@ -203,7 +236,7 @@ def make_plate_names(sample_df):
     
     for _, row in sample_df.iterrows():
         proposal = row['Proposal']
-        sample = row['Sample']
+        sample = row['Group_or_abrvSample']
         num_plates = int(row['Number_of_sorted_plates'])
         is_custom = bool(row['is_custom'])
         
@@ -549,13 +582,13 @@ def detect_sample_metadata_csv():
     """
     # Complete list of expected headers from sample_metadata.csv format
     expected_headers = [
-        'Proposal', 'Sample', 'Collection Year', 'Collection Month',
+        'Proposal', 'Group_or_abrvSample', 'Sample_full', 'Collection Year', 'Collection Month',
         'Collection Day', 'Sample Isolated From', 'Latitude', 'Longitude',
         'Depth (m)', 'Elevation (m)', 'Country', 'Number_of_sorted_plates'
     ]
     
     # Required subset for processing
-    required_headers = ['Proposal', 'Sample', 'Number_of_sorted_plates']
+    required_headers = ['Proposal', 'Group_or_abrvSample', 'Number_of_sorted_plates']
     
     # Look for sample_metadata.csv specifically first
     sample_metadata_file = Path('sample_metadata.csv')
@@ -1250,7 +1283,7 @@ def process_additional_standard_plates(existing_sample_df, additional_plates, ex
         # Find the sample with matching proposal and sample combination
         sample_row = existing_sample_df[
             (existing_sample_df['Proposal'] == proposal) &
-            (existing_sample_df['Sample'] == sample)
+            (existing_sample_df['Group_or_abrvSample'] == sample)
         ]
         
         if sample_row.empty:

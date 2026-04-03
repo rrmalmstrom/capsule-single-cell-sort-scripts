@@ -155,7 +155,7 @@ def validate_database_schema(sample_metadata_df, individual_plates_df, master_pl
     """
     # Required columns for each table
     required_columns = {
-        'sample_metadata': ['Proposal', 'Sample'],
+        'sample_metadata': ['Proposal', 'Group_or_abrvSample', 'Sample_full'],
         'individual_plates': ['plate_name', 'upper_left_registration'],
         'master_plate_data': ['Plate_ID', 'Well', 'Type', 'Index_Set', 'Passed_library']
     }
@@ -543,7 +543,8 @@ def create_spits_sample_name(row):
     - neg_cntrl samples use prefix: "NoTemplateControl"
     - All other samples use prefix: "Uncultured microbe JGI"
     
-    Template: "{prefix} {groups}_{plate_id}_{well}"
+    Template: "{prefix} {sample_full}_{groups}_{plate_id}_{well}"
+    Sample_full comes from sample_metadata (e.g., 'SitukAM.123').
     Only includes groups that have actual values (not empty, None, or 'None').
     
     Args:
@@ -552,6 +553,9 @@ def create_spits_sample_name(row):
     Returns:
         str: Formatted sample name
     """
+    # Get Sample_full from merged sample_metadata
+    sample_full = str(row.get('Sample_full', '')).strip()
+
     # Get group values and filter out empty/None values
     groups = []
     for group_col in ['Group_1', 'Group_2', 'Group_3']:
@@ -566,13 +570,13 @@ def create_spits_sample_name(row):
     # Select prefix based on sample type
     prefix = "NoTemplateControl" if row.get('Type', '') == 'neg_cntrl' else "Uncultured microbe JGI"
     
-    # Build sample name with only non-empty groups
+    # Build sample name: Sample_full always first, then non-empty groups
     if groups:
         groups_str = '_'.join(groups)
-        return f"{prefix} {groups_str}_{plate_id}_{well}"
+        return f"{prefix} {sample_full}_{groups_str}_{plate_id}_{well}"
     else:
         # No groups have values
-        return f"{prefix} {plate_id}_{well}"
+        return f"{prefix} {sample_full}_{plate_id}_{well}"
 
 
 def create_internal_collaborator_name(row):
@@ -637,7 +641,7 @@ def merge_sample_metadata_for_spits(selected_wells_df, sample_metadata_df):
     # Prepare metadata for merging: rename join columns to match temp keys
     metadata_for_merge = sample_metadata_df.copy()
     metadata_for_merge = metadata_for_merge.rename(
-        columns={'Proposal': '_join_Proposal', 'Sample': '_join_Sample'}
+        columns={'Proposal': '_join_Proposal', 'Group_or_abrvSample': '_join_Sample'}
     )
     # Cast to str to match the parsed join keys above
     metadata_for_merge['_join_Proposal'] = metadata_for_merge['_join_Proposal'].astype(str)

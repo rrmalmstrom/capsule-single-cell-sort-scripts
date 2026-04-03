@@ -42,11 +42,12 @@ This is the **fourth script** in the laboratory workflow that processes plate se
 -- individual_plates table
 plate_name, upper_left_registration
 
--- master_plate_data table  
+-- master_plate_data table
 Plate_ID, Well, Type, Index_Set, Passed_library
 
 -- sample_metadata table
-Proposal, Sample  (join keys for metadata lookup; Project column removed)
+Proposal, Group_or_abrvSample, Sample_full
+-- (Proposal + Group_or_abrvSample are join keys; Sample_full used in SPITS name generation)
 ```
 
 ## Output Files
@@ -103,10 +104,12 @@ def select_wells_from_full_plate(plate_wells, index_sets_str):
 ```
 
 ### Sample Name Generation
-- **Template**: `"Uncultured microbe JGI {groups}_{plate_id}_{well}"`
-- **Group filtering**: Only includes non-empty Group_1, Group_2, Group_3 values
-- **Fallback**: Uses plate_id and well if no groups available
-- **Example**: `"Uncultured microbe JGI SitukAM_Sediment_9735_SitukAM.1_A1"`
+- **Template**: `"Uncultured microbe JGI {Sample_full}_{groups}_{plate_id}_{well}"`
+- **`Sample_full`**: Full sample identifier from `sample_metadata` (e.g., `SitukAM.123`), always included first
+- **Group filtering**: Only includes non-empty `Group_1`, `Group_2`, `Group_3` values from the plate layout
+- **Fallback**: If no groups have values, format is `"Uncultured microbe JGI {Sample_full}_{plate_id}_{well}"`
+- **Example**: `"Uncultured microbe JGI SitukAM.123_Sediment_599999_SitukAM.1_A1"`
+- **Negative controls**: Prefix is `"NoTemplateControl"` instead of `"Uncultured microbe JGI"`
 
 ### Fixed Laboratory Parameters
 ```python
@@ -195,16 +198,17 @@ Custom_Plate.1,
 ## Metadata Integration
 
 ### Per-Sample Metadata Join
-Each well's metadata is looked up individually by parsing its `Plate_ID` to extract the `Proposal` and `Sample` components, then joining against the `sample_metadata` table on those two fields.
+Each well's metadata is looked up individually by parsing its `Plate_ID` to extract the `Proposal` and `Group_or_abrvSample` components, then joining against the `sample_metadata` table on those two fields.
 
 ```
-Plate_ID '9735_SitukAM.1'  →  Proposal='9735', Sample='SitukAM'
-                             →  joined to sample_metadata row where Proposal='9735' AND Sample='SitukAM'
+Plate_ID '9735_SitukAM.1'  →  Proposal='9735', Group_or_abrvSample='SitukAM'
+                             →  joined to sample_metadata row where Proposal='9735' AND Group_or_abrvSample='SitukAM'
+                             →  Sample_full='SitukAM.123' (and other metadata) brought into the merged row
 ```
 
 Both join keys are cast to `str` before merging to prevent type mismatches when pandas infers a numeric dtype for the `Proposal` column read from SQLite (since Proposal values are typically numeric).
 
-This ensures that when multiple samples from different proposals are processed together, each well receives the correct collection date, location, and environmental context for its own sample — not metadata from another sample.
+This ensures that when multiple samples from different proposals are processed together, each well receives the correct collection date, location, and environmental context for its own sample — not metadata from another sample. The `Sample_full` value from the matched metadata row is then used in the SPITS sample name.
 
 - **Geographic information**: Includes latitude, longitude, depth, elevation
 - **Temporal data**: Collection year, month, day
@@ -214,12 +218,12 @@ This ensures that when multiple samples from different proposals are processed t
 Custom plates are now designated via the `is_custom` column in `sample_metadata.csv` (Script 1). Because all samples — including custom ones — must be present in the metadata CSV before Script 1 runs, every plate in the database is guaranteed to have a corresponding `Proposal`/`Sample` row in `sample_metadata`. The previous scenario where custom plates could be added without metadata (via `custom_plate_names.txt`) no longer applies.
 
 ### Required `sample_metadata` Columns for Join
-The following columns must exist in `sample_metadata` for the join to work:
+The following columns must exist in `sample_metadata` for the join and SPITS name generation to work:
 ```
-Proposal, Sample
+Proposal, Group_or_abrvSample, Sample_full
 ```
-These are validated at startup by `validate_database_schema()`. If either is missing, the script exits with a FATAL ERROR before processing begins.
+These are validated at startup by `validate_database_schema()`. If any are missing, the script exits with a FATAL ERROR before processing begins.
 
-> **Note**: The `Project` column has been removed from `sample_metadata`. `Proposal` now serves as the sole project identifier and is used as the join key when merging metadata onto selected wells.
+> **Note**: The `Project` column has been removed from `sample_metadata`. The old `Sample` column has been replaced by `Group_or_abrvSample` (used as the join key, parsed from `Plate_ID`) and `Sample_full` (used in SPITS sample name generation).
 
 This script serves as the critical decision point in the workflow, translating FA quality results into actionable well selections for downstream processing and submission to external systems.

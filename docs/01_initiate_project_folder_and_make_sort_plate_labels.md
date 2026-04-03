@@ -32,8 +32,9 @@ This is the **first script** in the laboratory workflow that initializes a new p
 Expected file: `sample_metadata.csv` (note the intentional typo in filename)
 
 **Required columns:**
-- `Proposal`: Project proposal identifier (used as the primary project key throughout the workflow)
-- `Sample`: Sample identifier
+- `Proposal`: Project proposal identifier (used as the primary project key throughout the workflow). Must be alphanumeric only (no symbols or spaces), max 8 characters.
+- `Group_or_abrvSample`: Abbreviated sample name used for plate naming (e.g., `SitukAM`). Stored in `individual_plates.sample` and used to construct plate names (e.g., `599999_SitukAM.1`). Must be alphanumeric only (no symbols or spaces), max 8 characters.
+- `Sample_full`: Full sample identifier including any numeric suffix (e.g., `SitukAM.123`). Used in downstream SPITS file generation as part of the sample name.
 - `Number_of_sorted_plates`: Integer count of plates per sample
 - `is_custom`: Boolean flag indicating whether this sample uses a custom plate layout (`True`/`False` or `1`/`0`)
 
@@ -49,7 +50,7 @@ Expected file: `sample_metadata.csv` (note the intentional typo in filename)
 - `Sample Isolated From`, `Latitude`, `Longitude`
 - `Depth (m)`, `Elevation (m)`, `Country`
 
-> **Note**: The `Project` column has been removed. `Proposal` now serves as the sole project identifier and is used to construct plate names (e.g., `BP9735_SitukAM.1`).
+> **Note**: The `Project` column has been removed. `Proposal` now serves as the sole project identifier and is used to construct plate names (e.g., `BP9735_SitukAM.1`). The old `Sample` column has been split into `Group_or_abrvSample` (short alphanumeric name, max 8 chars, used for plate naming) and `Sample_full` (full identifier used in SPITS submission).
 
 ### Optional Input Files
 - **`additional_standard_plates.txt`**: Additional plates for existing samples (format: `PROPOSAL_SAMPLE:COUNT`)
@@ -105,17 +106,19 @@ full_barcode = f"{base_barcode}-{next_number}"
 -- sample_metadata table
 CREATE TABLE sample_metadata (
     Proposal TEXT,
-    Sample TEXT,
+    Group_or_abrvSample TEXT,   -- abbreviated name used for plate naming (max 8 alphanumeric chars)
+    Sample_full TEXT,           -- full sample identifier (e.g., 'SitukAM.123')
     Collection_Year INTEGER,
     -- ... other metadata columns
 );
 
 -- individual_plates table
 -- Note: the 'project' column stores the Proposal value (used as the project key)
+-- Note: the 'sample' column stores the Group_or_abrvSample value
 CREATE TABLE individual_plates (
     plate_name TEXT,
     project TEXT,      -- stores the Proposal value
-    sample TEXT,
+    sample TEXT,       -- stores the Group_or_abrvSample value
     plate_number INTEGER,
     is_custom BOOLEAN,
     barcode TEXT,
