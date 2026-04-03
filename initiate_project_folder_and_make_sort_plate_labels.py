@@ -69,7 +69,7 @@ from sqlalchemy import create_engine, text
 CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 LETTERS_ONLY = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 BARTENDER_HEADER = '%BTW% /AF="\\\\BARTENDER\\shared\\templates\\ECHO_BCode8.btw" /D="%Trigger File Name%" /PRN="bcode8" /R=3 /P /DD\r\n\r\n%END%\r\n\r\n\r\n'
-BARTENDER_TUBE_HEADER = '%BTW% /AF="\\\\BARTENDER\\shared\\templates\\JGI_Label_BCode5.btw" /D="%Trigger File Name%" /PRN="bcode85" /R=3 /P /DD\r\n\r\n%END%\r\n\r\n\r\n'
+BARTENDER_TUBE_HEADER = '%BTW% /AF="\\\\BARTENDER\\shared\\templates\\JGI_Label_BCode5.btw" /D="%Trigger File Name%" /PRN="bcode5" /R=3 /P /DD\r\n\r\n%END%\r\n\r\n\r\n'
 
 # Database and file names
 DATABASE_NAME = "project_summary.db"
@@ -587,7 +587,7 @@ def make_bartender_tube_labels_file(df, output_path):
     Format: For each unique Proposal+Group_or_abrvSample combination (in descending order),
     write 3 lines representing SPC_PTA (70%EtOH), SPC (60%Glycerol), and Cells (10%Glycerol) tubes.
     No blank separator lines between label groups.
-    Uses JGI_Label_BCode5.btw template and bcode85 printer.
+    Uses JGI_Label_BCode5.btw template and bcode5 printer.
     
     Args:
         df (pd.DataFrame): DataFrame with plate data (must have 'project', 'sample' columns)

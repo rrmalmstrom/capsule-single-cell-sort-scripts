@@ -70,7 +70,7 @@ Both BarTender files are written to `1_make_barcode_labels/bartender_barcode_lab
 - **Scope**: Only plates added in the current run
 
 #### Tube Labels (`BARTENDER_tube_labels_{timestamp}.txt`)
-- **Template**: `JGI_Label_BCode5.btw` / printer `bcode85`
+- **Template**: `JGI_Label_BCode5.btw` / printer `bcode5`
 - **Content**: Three lines per unique `Proposal`+`Group_or_abrvSample` combination, in the same descending order as the sort plate label file
 - **Format per sample group** (3 lines):
   ```
