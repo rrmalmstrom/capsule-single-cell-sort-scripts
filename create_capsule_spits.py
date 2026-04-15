@@ -60,6 +60,19 @@ from datetime import datetime
 from pathlib import Path
 from sqlalchemy import create_engine
 
+# === WORKFLOW SNAPSHOT ITEMS ===
+# Files and folders this script modifies, deletes, or replaces.
+# The workflow manager reads this list before running the script to create
+# a pre-run backup. Keep this list accurate — an incomplete list means
+# incomplete rollback capability.
+SNAPSHOT_ITEMS = [
+    "project_summary.db",
+    "master_plate_data.csv",
+    "individual_plates.csv",
+    "4_plate_selection_and_pooling/",
+]
+# === END WORKFLOW SNAPSHOT ITEMS ===
+
 
 def create_success_marker():
     """Create success marker file for workflow manager integration."""

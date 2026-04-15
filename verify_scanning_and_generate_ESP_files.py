@@ -35,6 +35,19 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 
+# === WORKFLOW SNAPSHOT ITEMS ===
+# Files and folders this script modifies, deletes, or replaces.
+# The workflow manager reads this list before running the script to create
+# a pre-run backup. Keep this list accurate — an incomplete list means
+# incomplete rollback capability.
+SNAPSHOT_ITEMS = [
+    "project_summary.db",
+    "master_plate_data.csv",
+    "individual_plates.csv",
+    "4_plate_selection_and_pooling/C_smear_file_for_ESP_upload/",
+]
+# === END WORKFLOW SNAPSHOT ITEMS ===
+
 
 # ---------------------------------------------------------------------------
 # Success marker

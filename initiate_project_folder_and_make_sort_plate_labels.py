@@ -75,6 +75,19 @@ BARTENDER_TUBE_HEADER = '%BTW% /AF="\\\\BARTENDER\\shared\\templates\\JGI_Label_
 DATABASE_NAME = "project_summary.db"
 BARTENDER_FILE = "BARTENDER_sort_plate_labels.txt"
 
+# === WORKFLOW SNAPSHOT ITEMS ===
+# Files and folders this script modifies, deletes, or replaces.
+# The workflow manager reads this list before running the script to create
+# a pre-run backup. Keep this list accurate — an incomplete list means
+# incomplete rollback capability.
+SNAPSHOT_ITEMS = [
+    "project_summary.db",
+    "sample_metadata.csv",
+    "individual_plates.csv",
+    "1_make_barcode_labels/",
+]
+# === END WORKFLOW SNAPSHOT ITEMS ===
+
 
 def validate_custom_base_barcode(base_barcode):
     """

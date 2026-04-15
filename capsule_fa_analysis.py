@@ -71,6 +71,22 @@ from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.patches import Rectangle
 import os
 
+# === WORKFLOW SNAPSHOT ITEMS ===
+# Files and folders this script modifies, deletes, or replaces.
+# The workflow manager reads this list before running the script to create
+# a pre-run backup. Keep this list accurate — an incomplete list means
+# incomplete rollback capability.
+SNAPSHOT_ITEMS = [
+    "project_summary.db",
+    "master_plate_data.csv",
+    "individual_plates.csv",
+    "3_FA_analysis/",
+]
+# NOTE: archived_files/FA_results_archive/capsule_fa_analysis_results is NOT listed here.
+# It is permanently protected and never touched by the undo system.
+# The script itself archives FA results there on each run — that is intentional.
+# === END WORKFLOW SNAPSHOT ITEMS ===
+
 
 def create_success_marker():
     """Create success marker file for workflow manager integration."""
@@ -1516,7 +1532,7 @@ def main():
     
     # Step 8: Archive FA results with batch-specific timestamping
     if fa_result_dirs_to_archive:
-        archive_fa_results(fa_result_dirs_to_archive, "capsule_fa_analysis_results", batch_id)
+        archive_fa_results(fa_result_dirs_to_archive, "FA_results_archive/capsule_fa_analysis_results", batch_id)
     
     # Step 9: Generate plate visualizations (only for newly processed plates)
     try:
