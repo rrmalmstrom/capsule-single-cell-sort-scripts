@@ -2013,10 +2013,11 @@ def create_dilution_and_fa_bartender_file(plate_list, individual_plates_df):
         plate_list (list): List of plate names being processed (in processing order)
         individual_plates_df (pd.DataFrame): Database plate information for barcode lookup
     """
-    output_dir = Path("2_library_creation")
-    output_dir.mkdir(exist_ok=True)
+    output_dir = Path("2_library_creation/Bartender_files")
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    output_path = output_dir / "BARTENDER_dilution_and_FA_plate_labels.txt"
+    timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
+    output_path = output_dir / f"BARTENDER_dilution_and_FA_plate_labels_{timestamp}.txt"
 
     # Build list of (barcode_number, barcode, plate_name) tuples so we can sort
     plate_entries = []
@@ -2045,27 +2046,21 @@ def create_dilution_and_fa_bartender_file(plate_list, individual_plates_df):
             # Write BarTender header
             f.write(BARTENDER_HEADER)
 
-            total_labels = len(plate_entries) * 2  # dilution + FA per plate
-            label_index = 0
-
             for barcode_number, barcode, plate_name in plate_entries:
                 dilution_barcode = f"{barcode}D"
                 fa_barcode = f"{barcode}F"
 
-                # --- Dilution plate label ---
+                # --- Dilution and FA plate labels written back-to-back (no blank between them) ---
                 f.write(f'{dilution_barcode},"{plate_name} Dilution"\r\n')
-                label_index += 1
-                if label_index < total_labels:
-                    f.write(',\r\n')
-
-                # --- FA plate label ---
                 f.write(f'{fa_barcode},"{plate_name} FA"\r\n')
-                label_index += 1
-                if label_index < total_labels:
-                    f.write(',\r\n')
 
-            # Trailing blank line for BarTender compatibility
-            f.write('\r\n')
+                # After every pair (including the last), write a blank separator label
+                f.write(',\r\n')
+
+            # Three blank labels at the end (the loop already wrote one after the last pair,
+            # so write two more to reach a total of three trailing blanks)
+            f.write(',\r\n')
+            f.write(',\r\n')
 
         # BarTender dilution/FA label file created - no detailed output needed
 
