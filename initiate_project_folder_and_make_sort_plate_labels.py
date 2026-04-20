@@ -1035,6 +1035,18 @@ def create_project_folder_structure():
                 created_folders.append(str(folder_path))
             folder_path.mkdir(exist_ok=True)
         
+        # Create MISC folder if no folder with that name (case-insensitive) already exists
+        existing_names_lower = {p.name.lower() for p in Path('.').iterdir() if p.is_dir()}
+        if 'misc' not in existing_names_lower:
+            misc_dir = Path("MISC")
+            misc_dir.mkdir(exist_ok=True)
+            created_folders.append(str(misc_dir))
+            folders['misc'] = misc_dir
+        else:
+            # Point to whichever existing folder matches (case-insensitive)
+            misc_existing = next(p for p in Path('.').iterdir() if p.is_dir() and p.name.lower() == 'misc')
+            folders['misc'] = misc_existing
+        
         # Create subfolder structure for barcode labels
         bartender_dir = folders['make_barcode_labels'] / "bartender_barcode_labels"
         if not bartender_dir.exists():
