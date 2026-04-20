@@ -583,7 +583,9 @@ def make_bartender_file(df, output_path):
                     plate_name = row['plate_name']
                     f.write(f'{barcode},"{plate_name}"\r\n')
             
-            # Add proper trailing empty lines for BarTender compatibility
+            # Add 3 trailing blank labels for BarTender compatibility
+            for _ in range(3):
+                f.write(',\r\n')
             f.write('\r\n')
         
         # BarTender file created silently
@@ -641,7 +643,9 @@ def make_bartender_tube_labels_file(df, output_path):
                 f.write(f'{combined},{proposal},{sample},SPC,60%Glycerol,,{sample}_2\r\n')
                 f.write(f'{combined},{proposal},{sample},Cells,10%Glycerol,,{sample}_1\r\n')
             
-            # Add proper trailing empty lines for BarTender compatibility
+            # Add 3 trailing blank labels for BarTender compatibility
+            for _ in range(3):
+                f.write(',,,,,,\r\n')
             f.write('\r\n')
         
         # BarTender tube label file created silently
