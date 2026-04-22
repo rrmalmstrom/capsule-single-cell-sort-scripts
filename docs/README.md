@@ -41,14 +41,15 @@ The older scripts (`make_ESP_smear_analysis_file.py` and `relabel_lib_plates_for
 The scripts must be run in numerical order (1→2→3→4→5→6) as each script depends on outputs from previous scripts.
 
 ### Key Input Files
-- **Script 1**: `sample_metadata.csv` (sample metadata)
+- **Script 1**: `sample_metadata.csv` (sample metadata); optionally `new_samples.csv` to add new samples on re-runs
 - **Script 2**: `library_sort_plates.txt` (plates to process)
-- **Script 3**: FA instrument output files in subdirectories
+- **Script 3**: FA instrument output files in subdirectories; `thresholds.txt` (manually renamed from Script 2 output)
 - **Script 4**: `plate_selection.csv` (user-created selection criteria)
 - **Script 5**: Grid table CSV files from external system
 - **Script 6**: Completed Excel scanning file from Script 5 output
 
 ### Manual Steps Between Scripts
+- **Between Scripts 2 and 3**: Script 2 generates `3_FA_analysis/thresholds_{timestamp}.txt`. The user must fill in the `DNA_conc_threshold_(nmol/L)` values for each plate and rename the file to `thresholds.txt` before running Script 3.
 - **Between Scripts 5 and 6**: User must scan physical barcodes into Excel template and verify all Checker values show TRUE
 
 ### Key Output Files

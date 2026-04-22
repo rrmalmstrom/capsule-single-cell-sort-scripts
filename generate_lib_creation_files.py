@@ -1342,13 +1342,17 @@ def create_fa_upload_files(fa_well_assignments, individual_plates_df):
 
 def generate_thresholds_file(plate_list, individual_plates_df):
     """
-    Generate thresholds.txt file for FA analysis plates in the 3_FA_analysis/ folder.
+    Generate thresholds file for FA analysis plates in the 3_FA_analysis/ folder.
     
-    Creates a tab-separated file with plate barcodes and fixed threshold values:
+    Creates a tab-separated file named thresholds_{YYYYMMDD_HHMMSS}.txt with plate
+    barcodes and fixed threshold values:
     - Destination_plate: Plate barcodes (without F suffix)
     - DNA_conc_threshold_(nmol/L): Empty (for manual entry)
     - Size_theshold_(bp): Fixed value 530
     - dilution_factor: Fixed value 20
+    
+    A datetime suffix is used so that re-running Script 2 before Script 3 has consumed
+    the previous thresholds file does not overwrite it.
     
     Args:
         plate_list (list): List of plate names being processed
@@ -1375,8 +1379,9 @@ def generate_thresholds_file(plate_list, individual_plates_df):
     # Sort plate barcodes for consistent output
     plate_barcodes.sort()
     
-    # Create thresholds.txt file
-    thresholds_file = output_dir / "thresholds.txt"
+    # Create thresholds file with datetime suffix to avoid overwriting on re-runs
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    thresholds_file = output_dir / f"thresholds_{timestamp}.txt"
     
     try:
         with open(thresholds_file, 'w', newline='', encoding='utf-8') as f:

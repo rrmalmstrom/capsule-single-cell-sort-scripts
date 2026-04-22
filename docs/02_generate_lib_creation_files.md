@@ -151,7 +151,12 @@ CREATE TABLE master_plate_data (
 ## Integration Points
 - **Input from Script 1**: Reads database and plate inventory from [`initiate_project_folder_and_make_sort_plate_labels.py`](01_initiate_project_folder_and_make_sort_plate_labels.md)
 - **Output to Script 3**: Master database feeds into [`capsule_fa_analysis.py`](03_capsule_fa_analysis.md)
-- **Thresholds file**: Generates `3_FA_analysis/thresholds.txt` for FA analysis
+- **Thresholds file**: Generates `3_FA_analysis/thresholds_{YYYYMMDD_HHMMSS}.txt` for FA analysis (see note below)
+
+> **Note — Thresholds file manual step**: Script 2 generates the thresholds file with a datetime suffix (e.g., `thresholds_20240422_153012.txt`) to prevent accidental overwrites when Script 2 is re-run before Script 3 has consumed the previous file. Before running Script 3, a user must:
+> 1. Open the timestamped file and fill in the `DNA_conc_threshold_(nmol/L)` values for each plate
+> 2. Rename the file to exactly `thresholds.txt`
+> Script 3 reads `thresholds.txt` by that exact name and will fail if the file is missing or still has the timestamp suffix.
 
 ## Usage Examples
 

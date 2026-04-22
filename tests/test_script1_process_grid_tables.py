@@ -34,6 +34,16 @@ WORKSPACE = Path(__file__).parent.parent
 SOURCE_PROJECT = WORKSPACE / "fresh_to_ESP_spits_1_copy"
 BLANK_TEMPLATE = WORKSPACE / "BLANK_TEMPLATE_Pooling_Plate_Barcode_Scan_tool.xlsx"
 
+# Skip the entire module if the reference project directory is missing.
+# The reference data is a real project snapshot that is not committed to the
+# repository.  Tests will be skipped (not errored) until the data is restored.
+if not SOURCE_PROJECT.exists():
+    pytest.skip(
+        f"Reference project directory not found: {SOURCE_PROJECT}\n"
+        "Restore 'fresh_to_ESP_spits_1_copy/' to the workspace root to run these tests.",
+        allow_module_level=True,
+    )
+
 # Expected values from the source data
 EXPECTED_PROPOSAL = "599999"
 EXPECTED_SELECTED_PLATES = {"XUPVQ-1", "XUPVQ-3", "XUPVQ-6"}

@@ -28,6 +28,23 @@ Features:
 - CSV file archiving and regeneration
 - BarTender sort plate label file generation with reverse order (no blank separator lines)
 - BarTender tube label file generation (BARTENDER_tube_labels_*.txt) for unique samples per run
+- Adding new samples on subsequent runs via new_samples.csv (see below)
+
+Adding New Samples on Subsequent Runs (new_samples.csv):
+- Place a file named exactly "new_samples.csv" in the project working directory
+- The file must use the same format as the original sample_metadata.csv (same required columns,
+  including the is_custom column)
+- The script detects the file automatically on re-run; no interactive prompt is needed
+- Safety guard: the script will refuse to add new samples if downstream workflow steps
+  (select_plates, process_grid_barcodes, or verify_scanning_esp) have already been completed
+  in workflow_state.json — new samples must be added before those steps are run
+- Overlap check: any (Proposal, Group_or_abrvSample) pair already present in the database
+  will cause a FATAL ERROR; all new samples must be genuinely new
+- After successful processing, new_samples.csv is archived to
+  1_make_barcode_labels/previously_process_label_input_files/Additional_samples/
+  with a timestamp suffix (e.g., new_samples_20240422_153012.csv)
+- The full individual_plates table is replaced (not appended) so that all plates —
+  old and new — are written together, preventing data truncation on future runs
 
 Database Schema (Two-Table Architecture):
 - sample_metadata table: Project and sample information
@@ -38,6 +55,7 @@ File Organization:
 - Main workflow folders: 1_make_barcode_labels/, 2_library_creation/, 3_FA_analysis/
 - BarTender files → 1_make_barcode_labels/bartender_barcode_labels/
 - Processed input files → 1_make_barcode_labels/previously_process_label_input_files/custom_plates/ and /standard_plates/
+- Additional samples archive → 1_make_barcode_labels/previously_process_label_input_files/Additional_samples/
 - Archived files → archived_files/ (with timestamp suffixes)
 - Updated CSV files: sample_metadata.csv and individual_plates.csv
 
@@ -54,9 +72,11 @@ Safety Features:
 - Automatic file archiving before updates
 - Success marker creation for workflow integration
 - Consistent error handling with sys.exit() (no exit codes)
+- Downstream workflow step guard prevents adding new samples after plates have been selected
 """
 
 import argparse
+import json
 import pandas as pd
 import random
 import sys
@@ -757,6 +777,169 @@ def get_csv_file():
     return detect_sample_metadata_csv()
 
 
+# ---------------------------------------------------------------------------
+# New-samples-on-subsequent-run helpers
+# ---------------------------------------------------------------------------
+
+def detect_new_samples_csv():
+    """
+    Detect a 'new_samples.csv' file in the working directory.
+
+    The file is optional — its absence simply means no new samples are being
+    added this run.  Its presence is treated as the user's intent to add new
+    samples without any interactive prompt.
+
+    Returns:
+        Path or None: Path to new_samples.csv if found, None if not present.
+
+    Raises:
+        SystemExit: If multiple files matching 'new_samples*.csv' are found,
+                    which would be ambiguous and unsafe.
+    """
+    # Look for the canonical filename first
+    canonical = Path('new_samples.csv')
+
+    # Also search for any variant names to catch accidental duplicates
+    candidates = list(Path('.').glob('new_samples*.csv'))
+    # Filter to actual files (not directories)
+    candidates = [f for f in candidates if f.is_file()]
+
+    if len(candidates) > 1:
+        print("FATAL ERROR: Multiple 'new_samples*.csv' files found in the working directory.")
+        print("Found files:")
+        for f in candidates:
+            print(f"  - {f}")
+        print("Laboratory automation requires exactly one new samples file for safety.")
+        print("Please ensure only 'new_samples.csv' exists in the working directory.")
+        sys.exit()
+
+    if canonical.exists():
+        print(f"✅ Found new samples CSV: {canonical}")
+        return canonical
+
+    return None
+
+
+def check_downstream_steps_not_run():
+    """
+    Verify that no downstream workflow steps have been completed before
+    allowing new samples to be added.
+
+    Reads 'workflow_state.json' from the project root (same directory as
+    project_summary.db).  If any step at or after Script 4 (select_plates)
+    has status 'completed', the script exits with a FATAL ERROR instructing
+    the user to roll back via the workflow manager first.
+
+    Scripts 2 (prep_library) and 3 (analyze_quality) are re-runnable by
+    design (allow_rerun: true in CapsuleSorting_workflow.yml), so new samples
+    can safely be added even after those steps have completed.
+
+    If workflow_state.json does not exist (e.g. the workflow manager has not
+    been used), a warning is printed but the script is NOT blocked — the user
+    is assumed to know what they are doing.
+
+    Raises:
+        SystemExit: If any downstream step (Script 4+) is already completed.
+    """
+    state_file = Path('workflow_state.json')
+
+    if not state_file.exists():
+        print("⚠️  WARNING: workflow_state.json not found in project root.")
+        print("   Cannot verify downstream step status. Proceeding with caution.")
+        print("   If downstream steps (select_plates, etc.) have already run,")
+        print("   adding new samples now may produce inconsistent results.")
+        return
+
+    try:
+        with open(state_file, 'r', encoding='utf-8') as f:
+            state = json.load(f)
+    except Exception as e:
+        print(f"⚠️  WARNING: Could not read workflow_state.json: {e}")
+        print("   Cannot verify downstream step status. Proceeding with caution.")
+        return
+
+    # Steps that must NOT be completed before new samples can be added.
+    # Scripts 1-3 are re-runnable (allow_rerun: true); Scripts 4-6 are not.
+    downstream_steps = [
+        'select_plates',          # Script 4 — create_capsule_spits.py
+        'process_grid_barcodes',  # Script 5 — process_grid_tables_and_generate_barcodes.py
+        'verify_scanning_esp',    # Script 6 — verify_scanning_and_generate_ESP_files.py
+    ]
+
+    completed_downstream = [
+        step for step in downstream_steps
+        if state.get(step) == 'completed'
+    ]
+
+    if completed_downstream:
+        print("FATAL ERROR: Cannot add new samples — downstream workflow steps have already been completed.")
+        print("Completed downstream steps:")
+        for step in completed_downstream:
+            print(f"  - {step}")
+        print("")
+        print("Adding new samples after Scripts 4-6 have run would produce")
+        print("inconsistent results (missing SPITS data, missing ESP files, etc.).")
+        print("")
+        print("To add new samples, you must first roll back the workflow to the")
+        print("'init_project' step using the workflow manager, then re-run")
+        print("the affected downstream steps for all samples (old and new).")
+        print("Laboratory automation requires consistent data for safety.")
+        sys.exit()
+
+
+def validate_new_samples_against_existing(new_samples_csv_path, existing_sample_df):
+    """
+    Validate new sample rows against the existing database samples.
+
+    Applies the same full validation used on first-run CSVs (via
+    read_sample_csv()), then performs a cross-check to ensure none of
+    the new (Proposal, Group_or_abrvSample) pairs already exist in the
+    database.
+
+    Args:
+        new_samples_csv_path (Path): Path to new_samples.csv.
+        existing_sample_df (pd.DataFrame): Existing sample_metadata from the database.
+
+    Returns:
+        pd.DataFrame: Validated new sample DataFrame (with is_custom normalized,
+                      Number_of_sorted_plates cast to int).
+
+    Raises:
+        SystemExit: On any validation failure or overlap with existing samples.
+    """
+    # --- Full validation via read_sample_csv (same rules as first run) ---
+    # This validates: required columns, is_custom values, Proposal/Group length,
+    # alphanumeric constraints, and Number_of_sorted_plates as int.
+    new_df = read_sample_csv(new_samples_csv_path)
+
+    # --- Cross-check: no (Proposal, Group_or_abrvSample) overlap with existing DB ---
+    existing_pairs = set(
+        zip(
+            existing_sample_df['Proposal'].astype(str),
+            existing_sample_df['Group_or_abrvSample'].astype(str),
+        )
+    )
+
+    overlapping = []
+    for _, row in new_df.iterrows():
+        pair = (str(row['Proposal']), str(row['Group_or_abrvSample']))
+        if pair in existing_pairs:
+            overlapping.append(f"{row['Proposal']}_{row['Group_or_abrvSample']}")
+
+    if overlapping:
+        print("FATAL ERROR: The following samples in 'new_samples.csv' already exist in the database:")
+        for s_name in overlapping:
+            print(f"  - {s_name}")
+        print("")
+        print("'new_samples.csv' must contain ONLY new samples not previously registered.")
+        print("Do NOT include existing samples in this file — they are already in the database.")
+        print("Laboratory automation requires unique sample identifiers for safety.")
+        sys.exit()
+
+    print(f"✅ Validated {len(new_df)} new sample row(s) — no overlap with existing {len(existing_sample_df)} sample(s)")
+    return new_df
+
+
 def read_custom_plates_file(is_first_run=True):
     """
     Read custom plate names from 'custom_plate_names.txt' file.
@@ -1064,18 +1247,23 @@ def create_project_folder_structure():
         
         custom_plates_dir = label_input_dir / "custom_plates"
         standard_plates_dir = label_input_dir / "standard_plates"
+        additional_samples_dir = label_input_dir / "Additional_samples"
         if not custom_plates_dir.exists():
             created_folders.append(str(custom_plates_dir))
         if not standard_plates_dir.exists():
             created_folders.append(str(standard_plates_dir))
+        if not additional_samples_dir.exists():
+            created_folders.append(str(additional_samples_dir))
         custom_plates_dir.mkdir(exist_ok=True)
         standard_plates_dir.mkdir(exist_ok=True)
+        additional_samples_dir.mkdir(exist_ok=True)
         
         # Add subfolder paths to the dictionary
         folders['bartender_labels'] = bartender_dir
         folders['label_input_files'] = label_input_dir
         folders['custom_plates'] = custom_plates_dir
         folders['standard_plates'] = standard_plates_dir
+        folders['additional_samples'] = additional_samples_dir
         
         # Only print if folders were actually created
         if created_folders:
@@ -1162,7 +1350,7 @@ def manage_bartender_file(bartender_file_path, folders):
     # BarTender file organized
 
 
-def manage_input_files(folders, is_first_run=True, custom_plates_processed=False, additional_plates_processed=False):
+def manage_input_files(folders, is_first_run=True, custom_plates_processed=False, additional_plates_processed=False, new_samples_processed=False):
     """
     Move processed input files to organized folder structure with timestamps.
     Uses the new consolidated folder structure and adds timestamps to prevent overwrites.
@@ -1174,6 +1362,7 @@ def manage_input_files(folders, is_first_run=True, custom_plates_processed=False
                             False for subsequent runs (look in 1_make_barcode_labels folder)
         custom_plates_processed (bool): True if custom plates were processed this run
         additional_plates_processed (bool): True if additional standard plates were processed this run
+        new_samples_processed (bool): True if new samples (new_samples.csv) were processed this run
     """
     moved_files = []
     timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
@@ -1215,6 +1404,18 @@ def manage_input_files(folders, is_first_run=True, custom_plates_processed=False
                 moved_files.append(str(destination))
                 # File moved silently
     
+    # Move new_samples.csv with timestamp (only if new samples were processed)
+    if new_samples_processed:
+        new_samples_file = Path('new_samples.csv')
+        if new_samples_file.exists():
+            # Archive to dedicated Additional_samples subfolder with timestamp
+            # new_samples.csv → new_samples_2026_02_26-Time14-30-25.csv
+            timestamped_name = f"new_samples_{timestamp}.csv"
+            destination = folders['additional_samples'] / timestamped_name
+            shutil.move(str(new_samples_file), str(destination))
+            moved_files.append(str(destination))
+            # File moved silently
+
     # Input files organized silently
     
     return moved_files
@@ -1419,22 +1620,53 @@ def process_additional_standard_plates(existing_sample_df, additional_plates, ex
 
 def process_subsequent_run(existing_sample_df, existing_plates_df):
     """
-    Handle subsequent run: additional plates, custom plates.
-    
+    Handle subsequent run: new samples, additional plates, or custom plates.
+
+    Decision logic (mutually exclusive per run):
+      1. If 'new_samples.csv' is present in the working directory → process new
+         samples only.  Adding new samples and adding extra plates for existing
+         samples in the same run is not supported; run the script twice.
+      2. Otherwise → ask about additional standard plates for existing samples
+         (existing behaviour).
+
     Args:
         existing_sample_df (pd.DataFrame): Existing sample metadata
         existing_plates_df (pd.DataFrame): Existing plates data
-        
+
     Returns:
-        tuple: (sample_df, plates_df, custom_plates_processed, additional_plates_processed) -
-               Sample metadata, new plates DataFrames, and processing flags
+        tuple: (sample_df, plates_df, custom_plates_processed,
+                additional_plates_processed, new_samples_processed) — sample
+                metadata, new plates DataFrames, and processing flags.
     """
     print(f"\n🔄 SUBSEQUENT RUN DETECTED\n")
-    
+
     # Track what was processed
     custom_plates_processed = False
     additional_plates_processed = False
-    
+    new_samples_processed = False
+
+    # --- Path 1: New samples via new_samples.csv ---
+    new_samples_csv = detect_new_samples_csv()
+
+    if new_samples_csv is not None:
+        # Safety guard: refuse to add new samples if downstream steps have run
+        check_downstream_steps_not_run()
+
+        # Read and validate the new samples CSV (full validation + overlap check)
+        new_df = validate_new_samples_against_existing(new_samples_csv, existing_sample_df)
+
+        # Generate plate names for the new samples only
+        new_plates_df = make_plate_names(new_df)
+
+        # Merge new sample rows into the full sample metadata
+        merged_sample_df = pd.concat([existing_sample_df, new_df], ignore_index=True)
+
+        new_samples_processed = True
+        print(f"✅ New samples added: {len(new_df)} sample row(s), {len(new_plates_df)} new plate(s)")
+
+        return merged_sample_df, new_plates_df, custom_plates_processed, additional_plates_processed, new_samples_processed
+
+    # --- Path 2: Additional plates for existing samples ---
     # Ask for additional standard plates (only on subsequent runs)
     additional_plates = get_additional_standard_plates(is_first_run=False)
 
@@ -1445,24 +1677,16 @@ def process_subsequent_run(existing_sample_df, existing_plates_df):
     # custom_plates = get_custom_plates(is_first_run=False)
     #
     # if not additional_plates and not custom_plates:
-    #     return existing_sample_df, pd.DataFrame(), custom_plates_processed, additional_plates_processed
+    #     return existing_sample_df, pd.DataFrame(), custom_plates_processed, additional_plates_processed, new_samples_processed
     #
     # if custom_plates:
-    #     custom_df = pd.DataFrame([
-    #         {'plate_name': name, 'project': 'CUSTOM', 'sample': 'CUSTOM',
-    #          'plate_number': 1, 'is_custom': True}
-    #         for name in custom_plates
-    #     ])
-    #     if plates_df.empty:
-    #         plates_df = custom_df
-    #     else:
-    #         plates_df = pd.concat([plates_df, custom_df], ignore_index=True)
-    #     print(f"✅ Added {len(custom_plates)} custom plates")
+    #     custom_df = pd.DataFrame([...])
+    #     ...
     #     custom_plates_processed = True
 
     # Check if user wants to add any plates
     if not additional_plates:
-        return existing_sample_df, pd.DataFrame(), custom_plates_processed, additional_plates_processed
+        return existing_sample_df, pd.DataFrame(), custom_plates_processed, additional_plates_processed, new_samples_processed
 
     # Process additional standard plates
     plates_df = pd.DataFrame()
@@ -1475,7 +1699,7 @@ def process_subsequent_run(existing_sample_df, existing_plates_df):
 
     # Plates prepared for processing
 
-    return sample_df, plates_df, custom_plates_processed, additional_plates_processed
+    return sample_df, plates_df, custom_plates_processed, additional_plates_processed, new_samples_processed
 
 
 def process_barcodes(plates_df, existing_plates_df, custom_base_barcode=None):
@@ -1516,7 +1740,7 @@ def process_barcodes(plates_df, existing_plates_df, custom_base_barcode=None):
     return plates_df, final_plates_df
 
 
-def finalize_files_and_database(sample_df, final_plates_df, new_plates_df, folders, is_first_run=True, custom_plates_processed=False, additional_plates_processed=False, existing_sample_df=None):
+def finalize_files_and_database(sample_df, final_plates_df, new_plates_df, folders, is_first_run=True, custom_plates_processed=False, additional_plates_processed=False, existing_sample_df=None, new_samples_processed=False):
     """
     Handle all file operations: archiving, saving, organizing.
     
@@ -1529,12 +1753,25 @@ def finalize_files_and_database(sample_df, final_plates_df, new_plates_df, folde
         custom_plates_processed (bool): True if custom plates were processed this run
         additional_plates_processed (bool): True if additional standard plates were processed this run
         existing_sample_df (pd.DataFrame, optional): Existing sample metadata for comparison
+        new_samples_processed (bool): True if new samples (new_samples.csv) were processed this run.
+            When True, the sample_metadata table is always replaced (merged old+new rows).
     """
     # Archive existing database file (copy, not move)
     archive_database_file(DATABASE_NAME, folders)
-    
-    # Smart database save - only update what actually changes
-    save_to_database_smart(sample_df, new_plates_df, DATABASE_NAME, is_first_run, existing_sample_df)
+
+    # When new samples were added, force a full replace of both tables by
+    # treating this as a first-run save (sample_df already contains old+new rows,
+    # and final_plates_df already contains old+new plates).
+    effective_first_run = is_first_run or new_samples_processed
+
+    # Smart database save - only update what actually changes.
+    # When new_samples_processed is True (effective_first_run=True), we must
+    # replace the individual_plates table with the FULL set of plates
+    # (final_plates_df = old + new), not just the new plates (new_plates_df).
+    # Using new_plates_df here would truncate the table to only the newly added
+    # plates, causing individual_plates.csv to be wrong on all future runs.
+    plates_df_for_db = final_plates_df if new_samples_processed else new_plates_df
+    save_to_database_smart(sample_df, plates_df_for_db, DATABASE_NAME, effective_first_run, existing_sample_df)
     
     # Generate BarTender files with timestamp
     timestamp = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
@@ -1553,7 +1790,7 @@ def finalize_files_and_database(sample_df, final_plates_df, new_plates_df, folde
     # File Management - Organize output and input files
     manage_bartender_file(bartender_filename, folders)
     manage_bartender_file(bartender_tube_filename, folders)
-    manage_input_files(folders, is_first_run, custom_plates_processed, additional_plates_processed)
+    manage_input_files(folders, is_first_run, custom_plates_processed, additional_plates_processed, new_samples_processed)
     
     # CSV Management - Archive and create updated CSV files
     manage_csv_files(sample_df, final_plates_df, folders)
@@ -1612,10 +1849,11 @@ def main():
     
     # Process plates based on run type
     is_first_run = existing_sample_df is None
+    new_samples_processed = False  # default; overridden by process_subsequent_run() when new_samples.csv is used
     if is_first_run:
         sample_df, plates_df, custom_plates_processed, additional_plates_processed = process_first_run()
     else:
-        sample_df, plates_df, custom_plates_processed, additional_plates_processed = process_subsequent_run(existing_sample_df, existing_plates_df)
+        sample_df, plates_df, custom_plates_processed, additional_plates_processed, new_samples_processed = process_subsequent_run(existing_sample_df, existing_plates_df)
         if plates_df.empty:
             print("No new plates to add. Exiting.")
             return
@@ -1624,7 +1862,7 @@ def main():
     plates_df, final_plates_df = process_barcodes(plates_df, existing_plates_df, custom_base_barcode)
     
     # Handle all file operations
-    finalize_files_and_database(sample_df, final_plates_df, plates_df, folders, is_first_run, custom_plates_processed, additional_plates_processed, existing_sample_df)
+    finalize_files_and_database(sample_df, final_plates_df, plates_df, folders, is_first_run, custom_plates_processed, additional_plates_processed, existing_sample_df, new_samples_processed)
     
     # Print completion summary
     print_completion_summary(sample_df, final_plates_df, plates_df)

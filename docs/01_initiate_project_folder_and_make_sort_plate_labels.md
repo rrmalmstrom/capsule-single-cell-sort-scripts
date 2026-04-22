@@ -54,6 +54,7 @@ Expected file: `sample_metadata.csv` (note the intentional typo in filename)
 
 ### Optional Input Files
 - **`additional_standard_plates.txt`**: Additional plates for existing samples (format: `PROPOSAL_SAMPLE:COUNT`)
+- **`new_samples.csv`**: Add entirely new samples (and their plates) to an existing project on a subsequent run (see [Adding New Samples](#adding-new-samples-on-subsequent-runs) below)
 
 > **Note**: `custom_plate_names.txt` file-based input is **disabled**. Custom plate designation is now controlled entirely by the `is_custom` column in `sample_metadata.csv`. The underlying code is preserved in the script and can be re-enabled if needed.
 
@@ -89,17 +90,56 @@ Both BarTender files are written to `1_make_barcode_labels/bartender_barcode_lab
 - **`sample_metadata.csv`**: Updated sample metadata
 - **`individual_plates.csv`**: Complete plate inventory with barcodes
 
+## Adding New Samples on Subsequent Runs
+
+To add entirely new samples (and their plates) to an existing project, place a file named exactly **`new_samples.csv`** in the project working directory and re-run Script 1.
+
+### File Format
+`new_samples.csv` must use the **same format** as the original `sample_metadata.csv`, including all required columns:
+
+| Column | Description |
+|--------|-------------|
+| `Proposal` | Project proposal identifier (alphanumeric, max 8 chars) |
+| `Group_or_abrvSample` | Abbreviated sample name (alphanumeric, max 8 chars) |
+| `Sample_full` | Full sample identifier |
+| `Number_of_sorted_plates` | Integer plate count per sample |
+| `is_custom` | `True`/`False` — whether sample uses a custom plate layout |
+
+### Workflow
+1. Place `new_samples.csv` in the project working directory
+2. Run `python initiate_project_folder_and_make_sort_plate_labels.py`
+3. The script detects the file automatically — no interactive prompt needed
+4. New sample rows are appended to `sample_metadata` in the database
+5. New plates are generated with barcodes continuing from the existing maximum
+6. The full `individual_plates` table is replaced (old + new) to prevent data truncation on future runs
+7. `new_samples.csv` is archived to `1_make_barcode_labels/previously_process_label_input_files/Additional_samples/` with a timestamp suffix
+
+### Safety Guards
+- **Downstream step guard**: The script reads `workflow_state.json` and will refuse to add new samples if any of the following steps have already been completed: `select_plates`, `process_grid_barcodes`, or `verify_scanning_esp`. New samples must be added before those steps are run.
+- **Overlap check**: Any `(Proposal, Group_or_abrvSample)` pair already present in the database causes a FATAL ERROR — all entries in `new_samples.csv` must be genuinely new samples.
+- **Multiple file guard**: If more than one file matching `new_samples*.csv` is found, the script exits with a FATAL ERROR. Use exactly one file named `new_samples.csv`.
+
+### Archive Location
+```
+1_make_barcode_labels/
+└── previously_process_label_input_files/
+    └── Additional_samples/
+        └── new_samples_20240422_153012.csv   ← timestamped archive
+```
+
 ## Key Features
 
 ### Run Type Detection
 - **First run**: Creates new database and folder structure
 - **Subsequent runs**: Adds plates to existing project, continues barcode numbering
+- **New samples run**: Detected automatically via `new_samples.csv`; merges new samples into existing project
 
 ### Safety Features
 - **Laboratory-grade error handling**: "FATAL ERROR" messaging with `sys.exit()`
 - **Comprehensive validation**: File format, column presence, data types
 - **Automatic archiving**: Prevents data loss during updates
 - **Barcode uniqueness**: Built-in collision avoidance
+- **Downstream step guard**: Prevents adding new samples after plate selection has begun
 
 ### File Organization
 - **Timestamped processing**: All input files moved to organized folders with timestamps
