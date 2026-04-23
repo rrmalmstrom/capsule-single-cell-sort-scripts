@@ -53,7 +53,7 @@ Expected file: `sample_metadata.csv` (note the intentional typo in filename)
 > **Note**: The `Project` column has been removed. `Proposal` now serves as the sole project identifier and is used to construct plate names (e.g., `BP9735_SitukAM.1`). The old `Sample` column has been split into `Group_or_abrvSample` (short alphanumeric name, max 8 chars, used for plate naming) and `Sample_full` (full identifier used in SPITS submission).
 
 ### Optional Input Files
-- **`additional_standard_plates.txt`**: Additional plates for existing samples (format: `PROPOSAL_SAMPLE:COUNT`)
+- **`list_additional_sort_plates.txt`**: Additional sort plates for existing samples (format: `PROPOSAL_SAMPLE:COUNT`)
 - **`new_samples.csv`**: Add entirely new samples (and their plates) to an existing project on a subsequent run (see [Adding New Samples](#adding-new-samples-on-subsequent-runs) below)
 
 > **Note**: `custom_plate_names.txt` file-based input is **disabled**. Custom plate designation is now controlled entirely by the `is_custom` column in `sample_metadata.csv`. The underlying code is preserved in the script and can be re-enabled if needed.
@@ -206,7 +206,7 @@ python initiate_project_folder_and_make_sort_plate_labels.py REX12
 ```
 
 ### Interactive Prompts
-- "Add additional standard plates? (y/n)": Processes `additional_standard_plates.txt` if available
+- "Add additional sort plates to existing samples? (y/n)": Processes `list_additional_sort_plates.txt` if available
 
 > **Note**: The "Add custom plates? (y/n)" prompt has been removed. Custom plates are now designated via the `is_custom` column in `sample_metadata.csv`.
 

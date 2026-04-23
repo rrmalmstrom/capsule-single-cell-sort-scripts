@@ -18,7 +18,7 @@ CRITICAL REQUIREMENTS:
 Features:
 - Automatic detection of sample metadata CSV files (sample_metadata.csv)
 - is_custom column in sample metadata CSV controls which samples use custom plate layouts
-- File-based input for additional standard plates (additional_standard_plates.txt)
+- File-based input for additional standard plates (list_additional_sort_plates.txt)
 - NOTE: custom_plate_names.txt file-based input is DISABLED; use is_custom column in CSV instead
 - Simplified incremental barcode generation (e.g., ABC12-1, ABC12-2, ABC12-3)
 - Two-table database architecture for better data organization
@@ -1011,7 +1011,7 @@ def read_custom_plates_file(is_first_run=True):
 
 def read_additional_standard_plates_file(is_first_run=True):
     """
-    Read additional standard plates from 'additional_standard_plates.txt'.
+    Read additional standard plates from 'list_additional_sort_plates.txt'.
     Location depends on whether this is a first run or subsequent run.
     
     Args:
@@ -1028,39 +1028,39 @@ def read_additional_standard_plates_file(is_first_run=True):
     if is_first_run:
         # First run: look in working directory
         search_dir = Path('.')
-        additional_file = Path('additional_standard_plates.txt')
+        additional_file = Path('list_additional_sort_plates.txt')
         location_desc = "working directory"
     else:
         # Subsequent run: look in 1_make_barcode_labels folder
         search_dir = Path('1_make_barcode_labels')
-        additional_file = Path('1_make_barcode_labels/additional_standard_plates.txt')
+        additional_file = Path('1_make_barcode_labels/list_additional_sort_plates.txt')
         location_desc = "1_make_barcode_labels folder"
     
     # Check for multiple additional plate files in search directory
-    additional_files = list(search_dir.glob('*additional*standard*plates*.txt'))
-    additional_files.extend(search_dir.glob('additional_standard_plates.txt'))
-    additional_files.extend(search_dir.glob('*additional*plates*.txt'))
+    additional_files = list(search_dir.glob('list_additional_sort_plates.txt'))
+    additional_files.extend(search_dir.glob('*additional*sort*plates*.txt'))
+    additional_files.extend(search_dir.glob('*list*additional*plates*.txt'))
     
     # Remove duplicates and filter to actual files
     additional_files = list(set([f for f in additional_files if f.is_file()]))
     
     if len(additional_files) > 1:
-        print(f"FATAL ERROR: Multiple additional standard plate files found in {location_desc}")
+        print(f"FATAL ERROR: Multiple additional sort plate files found in {location_desc}")
         print("Found additional plate files:")
         for additional_file_found in additional_files:
             print(f"  - {additional_file_found}")
         print("Laboratory automation requires exactly one additional plate file for safety.")
-        print(f"Please ensure only 'additional_standard_plates.txt' exists in the {location_desc}.")
+        print(f"Please ensure only 'list_additional_sort_plates.txt' exists in the {location_desc}.")
         sys.exit()
     
     if not additional_file.exists():
-        print(f"FATAL ERROR: Additional standard plates requested but 'additional_standard_plates.txt' file not found in {location_desc}")
+        print(f"FATAL ERROR: Additional sort plates requested but 'list_additional_sort_plates.txt' file not found in {location_desc}")
         print("")
         print("To fix this error:")
         if is_first_run:
-            print("1. Create a file named 'additional_standard_plates.txt' in the working directory")
+            print("1. Create a file named 'list_additional_sort_plates.txt' in the working directory")
         else:
-            print("1. Create a file named 'additional_standard_plates.txt' in the 1_make_barcode_labels folder")
+            print("1. Create a file named 'list_additional_sort_plates.txt' in the 1_make_barcode_labels folder")
         print("2. Add one entry per line in format: PROJECT_SAMPLE:COUNT")
         print("3. Example file content:")
         print("   BP9735_SitukAM:2")
@@ -1106,21 +1106,21 @@ def read_additional_standard_plates_file(is_first_run=True):
                 sys.exit()
         
         if additional_plates:
-            print(f"✅ Read additional plates for {len(additional_plates)} samples from {additional_file}")
+            print(f"✅ Read additional sort plates for {len(additional_plates)} samples from {additional_file}")
         
         return additional_plates
         
     except Exception as e:
-        print(f"FATAL ERROR: Could not read additional plates file {additional_file}: {e}")
+        print(f"FATAL ERROR: Could not read additional sort plates file {additional_file}: {e}")
         print("Laboratory automation requires valid input files for safety.")
         sys.exit()
 
 
 def get_additional_standard_plates(is_first_run=True):
     """
-    Interactive function to ask user if they want additional standard plates and read from file.
+    Interactive function to ask user if they want additional sort plates and read from file.
     
-    Additional standard plates file format (additional_standard_plates.txt):
+    Additional sort plates file format (list_additional_sort_plates.txt):
     - One entry per line
     - Format: PROJECT_SAMPLE:COUNT
     - Example format:
@@ -1136,13 +1136,13 @@ def get_additional_standard_plates(is_first_run=True):
     """
     # Ask user interactively
     while True:
-        response = input("Add additional standard plates to existing samples? (y/n): ").lower().strip()
+        response = input("Add additional sort plates to existing samples? (y/n): ").lower().strip()
         if response in ['y', 'yes']:
-            # User wants additional standard plates - look for file
-            print("Looking for 'additional_standard_plates.txt' file...")
+            # User wants additional sort plates - look for file
+            print("Looking for 'list_additional_sort_plates.txt' file...")
             return read_additional_standard_plates_file(is_first_run)
         elif response in ['n', 'no']:
-            # User doesn't want additional standard plates
+            # User doesn't want additional sort plates
             return {}
         else:
             print("Please enter 'y' for yes or 'n' for no.")
@@ -1390,12 +1390,12 @@ def manage_input_files(folders, is_first_run=True, custom_plates_processed=False
     #             shutil.move(str(custom_file), str(destination))
     #             moved_files.append(str(destination))
     
-    # Move additional standard plate files with timestamp (only if they were processed)
+    # Move additional sort plate files with timestamp (only if they were processed)
     if additional_plates_processed:
-        standard_files = list(search_dir.glob('additional_standard_plates.txt')) + list(search_dir.glob('additional_sort_plates.txt'))
+        standard_files = list(search_dir.glob('list_additional_sort_plates.txt')) + list(search_dir.glob('additional_sort_plates.txt'))
         for standard_file in standard_files:
             if standard_file.exists():
-                # Add timestamp to filename: additional_standard_plates.txt -> additional_standard_plates_2026_02_26-Time14-30-25.txt
+                # Add timestamp to filename: list_additional_sort_plates.txt -> list_additional_sort_plates_2026_02_26-Time14-30-25.txt
                 stem = standard_file.stem
                 suffix = standard_file.suffix
                 timestamped_name = f"{stem}_{timestamp}{suffix}"
