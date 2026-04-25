@@ -8,9 +8,12 @@ This is the **first script** in the laboratory workflow that initializes a new p
 ### Project Initialization
 - **Creates standardized folder structure**: Automatically generates the complete workflow directory tree including:
   - `1_make_barcode_labels/` - For barcode generation files
-  - `2_library_creation/` - For library preparation files  
-  - `3_FA_analysis/` - For Fragment Analyzer results
+  - `2_library_creation/` - For library preparation files
+  - `3_FA_analysis/` - For FA analysis outputs (thresholds, summary stats, visualizations)
   - `4_plate_selection_and_pooling/` - For final selection and pooling
+  - `FA_results/` - For FA instrument output files
+    - `FA_results/libraries/` - Library FA instrument output subdirectories (read by Script 3)
+    - `FA_results/pools/` - Pooling FA instrument output subdirectories
   - `archived_files/` - For timestamped file archiving
 
 ### Barcode Generation System

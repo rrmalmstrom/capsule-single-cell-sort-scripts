@@ -36,7 +36,7 @@ This laboratory workflow consists of **six Python scripts** that execute in sequ
 
 **Key Outputs**:
 - `project_summary.db` with `sample_metadata` and `individual_plates` tables
-- Organized folder structure (`1_make_barcode_labels/`, `2_library_creation/`, etc.)
+- Organized folder structure (`1_make_barcode_labels/`, `2_library_creation/`, `3_FA_analysis/`, `FA_results/libraries/`, `FA_results/pools/`, etc.)
 - BarTender label files for Echo and Hamilton instruments
 
 ### 2. Library Preparation
@@ -58,14 +58,14 @@ This laboratory workflow consists of **six Python scripts** that execute in sequ
 **Script**: [`capsule_fa_analysis.py`](03_capsule_fa_analysis.md)
 
 **Purpose**: Fragment Analyzer data processing and quality assessment
-- Processes FA instrument output files with automated discovery
+- Reads FA instrument output from `FA_results/libraries/{date}/{plate_name}/`
 - Calculates index set failure rates using 50% threshold logic
 - Determines whole plate rework requirements
 - Generates quality visualizations and statistics
 
 **Key Outputs**:
 - Updated `master_plate_data` with FA results and quality decisions
-- FA summary statistics and plate visualization PDFs
+- FA summary statistics and plate visualization PDFs in `3_FA_analysis/`
 - Processing status tracking in `individual_plates` table
 
 ### 4. Plate Selection
@@ -172,7 +172,8 @@ project_directory/
 │   ├── FA_transfer_files/
 │   ├── FA_upload_files/
 │   └── Illumina_index_transfer_files/
-├── 3_FA_analysis/
+├── 3_FA_analysis/                           ← FA analysis outputs (thresholds, stats, PDFs)
+│   └── previously_processed_threshold_files/
 ├── 4_plate_selection_and_pooling/
 │   ├── {proposal}_capsule_sort_SPITS.csv
 │   ├── plate_selection.csv
@@ -182,6 +183,11 @@ project_directory/
 │   ├── C_smear_file_for_ESP_upload/         ← Script 6 output
 │   │   └── ESP_smear_file_for_upload_{barcode}.csv
 │   └── previously_processed_grid_files/
+├── FA_results/                              ← FA instrument output (permanent input location)
+│   ├── libraries/                           ← Library FA runs (read by Script 3)
+│   │   └── {date}/{plate_name}/
+│   │       └── *Smear Analysis Result.csv
+│   └── pools/                              ← Pooling FA runs
 └── archived_files/
 ```
 

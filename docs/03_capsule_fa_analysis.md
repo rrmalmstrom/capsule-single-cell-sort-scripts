@@ -31,10 +31,11 @@ This is the **third script** in the laboratory workflow that processes Fragment 
   - `master_plate_data`: Well-level data with index assignments
 
 ### FA Analysis Files
-- **Location**: `3_FA_analysis/` subdirectories
+- **Location**: `FA_results/libraries/` subdirectories
 - **Structure**: `{date}/{plate_name}/` containing FA instrument output
 - **File pattern**: `*Smear Analysis Result.csv`
 - **Auto-discovery**: Script automatically finds and validates FA files
+- **Temporary copies**: Renamed CSVs are copied to `3_FA_analysis/` during processing, then deleted after use
 
 ### Thresholds Configuration
 - **File**: `3_FA_analysis/thresholds.txt`
@@ -134,9 +135,9 @@ ALTER TABLE individual_plates ADD COLUMN fa_batch_id TEXT;
 ```
 
 ### File Organization
-- **FA result archiving**: Processed subdirectories moved to `archived_files/capsule_fa_analysis_results/batch_{timestamp}/`
-- **Threshold archiving**: `thresholds.txt` moved to `previously_processed_threshold_files/`
-- **Database archiving**: Timestamped copies preserve processing history
+- **FA instrument files**: Remain in `FA_results/libraries/` — this is a permanent input location, not archived by this script
+- **Threshold archiving**: `3_FA_analysis/thresholds.txt` moved to `3_FA_analysis/previously_processed_threshold_files/` after each run
+- **Database archiving**: Timestamped copies of `project_summary.db` preserved in `archived_files/`
 
 ### Visualization System
 - **384-well layout**: 16 rows (A-P) × 24 columns (1-24)

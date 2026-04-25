@@ -25,9 +25,9 @@ Features:
 - FA result directory archiving with organized folder management
 - Detailed quality reporting with pass/fail analysis
 
-Input File Organization (3_FA_analysis/ folder):
-- thresholds.txt: DNA concentration and size thresholds per destination plate
-- Subdirectories with FA instrument output: {date}/{plate_name}/
+Input File Organization:
+- 3_FA_analysis/thresholds.txt: DNA concentration and size thresholds per destination plate
+- FA_results/libraries/{date}/{plate_name}/: FA instrument output subdirectories
 - *Smear Analysis Result.csv: FA instrument output files (automatically discovered)
 
 Output File Organization (3_FA_analysis/ folder):
@@ -82,9 +82,8 @@ SNAPSHOT_ITEMS = [
     "individual_plates.csv",
     "3_FA_analysis/",
 ]
-# NOTE: archived_files/FA_results_archive/capsule_fa_analysis_results is NOT listed here.
-# It is permanently protected and never touched by the undo system.
-# The script itself archives FA results there on each run — that is intentional.
+# NOTE: FA_results/libraries/ is NOT listed here — it is a permanent input location
+# managed outside this script and is never modified or archived by this script.
 # === END WORKFLOW SNAPSHOT ITEMS ===
 
 
@@ -109,6 +108,8 @@ def create_success_marker():
 PROJECT_DIR = Path.cwd()
 
 FA_DIR = PROJECT_DIR / "3_FA_analysis"
+
+FA_INSTRUMENT_DIR = PROJECT_DIR / "FA_results" / "libraries"
 
 ARCHIV_DIR = PROJECT_DIR / "archived_files"
 
@@ -147,17 +148,19 @@ def compareFolderFileNames(folder_path, file, folder_name):
 
 ##########################
 ##########################
-def getFAfiles(fa_dir, processed_plates=None):
+def getFAfiles(fa_dir, processed_plates=None, copy_dest_dir=None):
     """
     Scan directories for FA output files and copy them to the working directory.
     Only processes plates that haven't been processed before.
     
     Args:
-        fa_dir: Path to the FA analysis directory
+        fa_dir: Path to the FA instrument output directory (FA_results/libraries/)
         processed_plates: Set of plate barcodes that have already been processed
+        copy_dest_dir: Directory where temporary CSV copies are written for processing.
+                       Defaults to FA_DIR (3_FA_analysis/) if not provided.
         
     Returns:
-        Tuple of (List of FA file names that were processed, List of FA result directories for archiving)
+        List of FA file names that were processed
         
     Raises:
         SystemExit: If no FA files are found
@@ -165,8 +168,10 @@ def getFAfiles(fa_dir, processed_plates=None):
     if processed_plates is None:
         processed_plates = set()
     
+    if copy_dest_dir is None:
+        copy_dest_dir = FA_DIR
+    
     fa_files = []
-    fa_result_dirs_to_archive = []  # Track directories for archiving
     skipped_files = []  # Track skipped files for reporting
     
     for direct in fa_dir.iterdir():
@@ -199,14 +204,11 @@ def getFAfiles(fa_dir, processed_plates=None):
                             # smear analysis .csv sample names.  Error out if mismatch
                             compareFolderFileNames(folder_path, file_path.name, folder_name)
                             
-                            # copy and rename smear analysis to main directory if good match
-                            shutil.copy(file_path, fa_dir / f'{folder_name}.csv')
+                            # copy and rename smear analysis to copy_dest_dir for processing
+                            shutil.copy(file_path, copy_dest_dir / f'{folder_name}.csv')
                             
                             # add folder name (aka FA plate name) to list
                             fa_files.append(f'{folder_name}.csv')
-                            
-                            # Track this directory for archiving
-                            fa_result_dirs_to_archive.append(fa)
     
 
     # Report on skipped files
@@ -221,8 +223,7 @@ def getFAfiles(fa_dir, processed_plates=None):
             print("\n\nDid not find any FA output files. Aborting program\n\n")
         sys.exit()
     
-    # return both lists
-    return fa_files, fa_result_dirs_to_archive
+    return fa_files
 ##########################
 ##########################
 
@@ -471,9 +472,9 @@ def analyze_fa_processing_status():
     # Calculate pending plates
     pending_plates = scheduled_plates - processed_plates
     
-    # Get available FA files
+    # Get available FA files (pass processed_plates to avoid unnecessary file copies)
     try:
-        available_fa_files, _ = getFAfiles(FA_DIR)
+        available_fa_files = getFAfiles(FA_INSTRUMENT_DIR, processed_plates, copy_dest_dir=FA_DIR)
         available_plates = set()
         for fa_file in available_fa_files:
             # Extract plate barcode from filename (remove .csv and F suffix)
@@ -1430,29 +1431,6 @@ def cleanup_temporary_csv_files(fa_files):
             except Exception as e:
                 print(f"Warning: Could not remove temporary file {csv_file}: {e}")
 
-def archive_fa_results(fa_result_dirs, archive_subdir_name, batch_id=None):
-    """Archive FA result directories to permanent storage by copying them with batch-specific timestamping"""
-    if not fa_result_dirs:
-        return
-    
-    # Create batch-specific archive directory with timestamp
-    if batch_id is None:
-        batch_id = datetime.now().strftime("%Y_%m_%d-Time%H-%M-%S")
-    
-    archive_base = PROJECT_DIR / "archived_files"
-    archive_dir = archive_base / archive_subdir_name / f"batch_{batch_id}"
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    
-    print(f"📁 Archiving {len(fa_result_dirs)} FA result directories to batch_{batch_id}")
-    
-    for result_dir in fa_result_dirs:
-        if result_dir.exists():
-            dest_path = archive_dir / result_dir.name
-            
-            # Copy directory to archive (no overwrite risk since each batch gets its own folder)
-            shutil.copytree(str(result_dir), str(dest_path))
-            print(f"   ✅ Archived: {result_dir.name}")
-
 def main():
     """
     Main function to orchestrate the incremental FA analysis workflow.
@@ -1486,7 +1464,7 @@ def main():
     
     # Step 4: Get FA files for ONLY unprocessed plates
     processed_plates = get_processed_plates()
-    fa_files, fa_result_dirs_to_archive = getFAfiles(FA_DIR, processed_plates)
+    fa_files = getFAfiles(FA_INSTRUMENT_DIR, processed_plates, copy_dest_dir=FA_DIR)
 
     # get dictionary where keys are FA file names and values are df's created from FA files
     # and get a list of destination/lib plate IDs processed
@@ -1530,18 +1508,14 @@ def main():
     generate_fresh_library_dataframe_csv(updated_master_df)
     generate_plate_names_csv_from_database()
     
-    # Step 8: Archive FA results with batch-specific timestamping
-    if fa_result_dirs_to_archive:
-        archive_fa_results(fa_result_dirs_to_archive, "FA_results_archive/capsule_fa_analysis_results", batch_id)
-    
-    # Step 9: Generate plate visualizations (only for newly processed plates)
+    # Step 8: Generate plate visualizations (only for newly processed plates)
     try:
         visualization_pdf = create_plate_visualization(fa_summary_df, FA_DIR)
     except Exception as e:
         print(f"❌ ERROR: Could not create plate visualizations: {e}")
         print("Continuing without visualizations...")
     
-    # Step 10: Clean up temporary CSV files
+    # Step 9: Clean up temporary CSV files
     cleanup_temporary_csv_files(fa_files)
     
     print(f"\n🎉 FA Analysis completed successfully!")

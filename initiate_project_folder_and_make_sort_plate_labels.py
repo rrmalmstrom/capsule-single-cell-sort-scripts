@@ -52,7 +52,8 @@ Database Schema (Two-Table Architecture):
 - Database file: project_summary.db
 
 File Organization:
-- Main workflow folders: 1_make_barcode_labels/, 2_library_creation/, 3_FA_analysis/
+- Main workflow folders: 1_make_barcode_labels/, 2_library_creation/, 3_FA_analysis/, FA_results/
+- FA instrument output: FA_results/libraries/ (library FA runs), FA_results/pools/ (pooling FA runs)
 - BarTender files → 1_make_barcode_labels/bartender_barcode_labels/
 - Processed input files → 1_make_barcode_labels/previously_process_label_input_files/custom_plates/ and /standard_plates/
 - Additional samples archive → 1_make_barcode_labels/previously_process_label_input_files/Additional_samples/
@@ -1191,6 +1192,9 @@ def create_project_folder_structure():
     - 2_library_creation/
     - 3_FA_analysis/
     - 4_plate_selection_and_pooling/
+    - FA_results/
+    - FA_results/libraries/
+    - FA_results/pools/
     - archived_files/
     - 1_make_barcode_labels/bartender_barcode_labels/
     - 1_make_barcode_labels/previously_process_label_input_files/
@@ -1210,6 +1214,7 @@ def create_project_folder_structure():
             'library_creation': Path("2_library_creation"),
             'fa_analysis': Path("3_FA_analysis"),
             'plate_selection_and_pooling': Path("4_plate_selection_and_pooling"),
+            'fa_results': Path("FA_results"),
             'archived_files': Path("archived_files"),
         }
         
@@ -1233,6 +1238,20 @@ def create_project_folder_structure():
             # Point to whichever existing folder matches (case-insensitive)
             misc_existing = next(p for p in Path('.').iterdir() if p.is_dir() and p.name.lower() == 'misc')
             folders['misc'] = misc_existing
+        
+        # Create FA results subfolders
+        fa_libraries_dir = folders['fa_results'] / "libraries"
+        fa_pools_dir = folders['fa_results'] / "pools"
+        if not fa_libraries_dir.exists():
+            created_folders.append(str(fa_libraries_dir))
+        if not fa_pools_dir.exists():
+            created_folders.append(str(fa_pools_dir))
+        fa_libraries_dir.mkdir(parents=True, exist_ok=True)
+        fa_pools_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Add FA results subfolder paths to the dictionary
+        folders['fa_libraries'] = fa_libraries_dir
+        folders['fa_pools'] = fa_pools_dir
         
         # Create subfolder structure for barcode labels
         bartender_dir = folders['make_barcode_labels'] / "bartender_barcode_labels"

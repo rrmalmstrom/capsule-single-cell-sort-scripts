@@ -43,7 +43,7 @@ The scripts must be run in numerical order (1→2→3→4→5→6) as each scrip
 ### Key Input Files
 - **Script 1**: `sample_metadata.csv` (sample metadata); optionally `new_samples.csv` to add new samples on re-runs
 - **Script 2**: `library_sort_plates.txt` (plates to process)
-- **Script 3**: FA instrument output files in subdirectories; `thresholds.txt` (manually renamed from Script 2 output)
+- **Script 3**: FA instrument output files in `FA_results/libraries/{date}/{plate_name}/`; `thresholds.txt` in `3_FA_analysis/` (manually renamed from Script 2 output)
 - **Script 4**: `plate_selection.csv` (user-created selection criteria)
 - **Script 5**: Grid table CSV files from external system
 - **Script 6**: Completed Excel scanning file from Script 5 output
@@ -82,11 +82,14 @@ Each script enhances the database with additional information:
 project_root/
 ├── 1_make_barcode_labels/          # Barcode generation outputs
 ├── 2_library_creation/             # Library preparation files
-├── 3_FA_analysis/                  # Fragment Analyzer results
+├── 3_FA_analysis/                  # FA analysis outputs (thresholds, stats, PDFs)
 ├── 4_plate_selection_and_pooling/  # Selection and pooling files
 │   ├── B_new_plate_barcode_labels/ # Script 5: Barcode scanning materials
 │   ├── C_smear_file_for_ESP_upload/ # Script 6: ESP files
 │   └── previously_processed_grid_files/ # Archived grid tables
+├── FA_results/                     # FA instrument output (permanent input location)
+│   ├── libraries/                  # Library FA runs — read by Script 3
+│   └── pools/                      # Pooling FA runs
 ├── archived_files/                 # Timestamped file archives
 └── docs/                          # This documentation
 ```
